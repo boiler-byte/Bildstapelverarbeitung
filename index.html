@@ -1,0 +1,1050 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bildstapel-Verarbeitung</title>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #1a1a1d;
+    --panel: #242428;
+    --border: #35353a;
+    --text: #e8e8ea;
+    --muted: #9a9aa2;
+    --accent: #4a9eff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  h1, h2, h3 { font-weight: 600; margin: 0 0 8px; }
+  h1 { font-size: 20px; }
+  h2 { font-size: 16px; }
+  h3 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+
+  button {
+    font: inherit; color: var(--text); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px 12px; cursor: pointer;
+    transition: background 120ms, border-color 120ms, color 120ms;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.1); }
+  button.danger { color: #ff8080; }
+  button.small { padding: 3px 8px; font-size: 12px; }
+
+  input[type=text], input[type=number], select {
+    font: inherit; color: var(--text); background: #1f1f23;
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px 8px; outline: none;
+    transition: border-color 120ms;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=color] {
+    padding: 2px; background: #1f1f23; border: 1px solid var(--border);
+    border-radius: 4px; width: 44px; height: 30px; cursor: pointer;
+  }
+  label { color: var(--muted); font-size: 12px; display: block; margin-bottom: 4px; }
+
+  .app {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    grid-template-rows: auto 1fr;
+    height: 100vh;
+    gap: 0;
+  }
+  header {
+    grid-column: 1 / -1;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 20px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  header h1 { margin: 0; }
+
+  main { overflow: auto; padding: 20px; }
+  aside {
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    padding: 20px;
+    overflow: auto;
+  }
+
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 6px;
+    padding: 32px;
+    text-align: center;
+    color: var(--muted);
+    margin-bottom: 20px;
+    transition: border-color 120ms, background 120ms;
+    cursor: pointer;
+  }
+  .dropzone.drag { border-color: var(--accent); background: #1f2630; }
+
+  .gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    background: #1f1f23;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    transition: border-color 120ms;
+  }
+  .card.active { border-color: var(--accent); }
+  .card .thumb {
+    aspect-ratio: 1 / 1;
+    background: #151517 repeating-conic-gradient(#1c1c1f 0% 25%, #151517 0% 50%) 50% / 16px 16px;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  .card .thumb img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+  .card .meta {
+    padding: 8px 10px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .card .name {
+    font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .card .ops-badge {
+    font-size: 11px; color: var(--muted);
+  }
+  .card .actions {
+    display: flex; gap: 4px; padding: 0 10px 10px;
+  }
+  .card .actions button { flex: 1; font-size: 12px; padding: 4px 6px; }
+
+  .empty {
+    color: var(--muted); text-align: center; padding: 40px 0;
+  }
+
+  .field { margin-bottom: 14px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  .row.tight > * { flex: none; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 4px; }
+
+  .divider { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
+
+  /* Modal / Editor */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    display: none; align-items: center; justify-content: center; z-index: 50;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    width: min(920px, 94vw); max-height: 92vh; overflow: auto;
+    padding: 20px;
+  }
+  .editor-grid {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 20px;
+  }
+  .editor-preview {
+    background: #151517 repeating-conic-gradient(#1c1c1f 0% 25%, #151517 0% 50%) 50% / 20px 20px;
+    border: 1px solid var(--border); border-radius: 6px;
+    min-height: 320px;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+    position: relative;
+  }
+  .editor-preview img { max-width: 100%; max-height: 520px; display: block; }
+  .editor-preview .loading {
+    color: var(--muted); font-size: 12px;
+  }
+  .editor-preview .overlay {
+    position: absolute; inset: 0; pointer-events: none;
+  }
+  .editor-preview canvas.crop-overlay { position: absolute; inset: 0; pointer-events: none; }
+
+  .steps-list {
+    list-style: none; padding: 0; margin: 0 0 14px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .steps-list li {
+    background: #1f1f23; border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 10px;
+    display: flex; justify-content: space-between; gap: 8px;
+    font-size: 12px;
+  }
+  .steps-list li .label { color: var(--muted); }
+  .steps-list li .val { color: var(--text); font-family: ui-monospace, Menlo, monospace; }
+  .steps-list .empty-step { color: var(--muted); font-style: italic; background: transparent; border: none; padding: 0; }
+
+  .op-section { margin-bottom: 16px; }
+  .op-section h3 { margin-bottom: 8px; }
+
+  .editor-actions {
+    display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px;
+  }
+  .editor-actions .left { margin-right: auto; }
+
+  .status {
+    font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 16px;
+  }
+  .status.error { color: #ff8080; }
+
+  .resize-list {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;
+  }
+  .resize-list .chip {
+    background: #1f1f23; border: 1px solid var(--border); border-radius: 12px;
+    padding: 3px 10px; font-size: 12px; display: flex; align-items: center; gap: 6px;
+  }
+  .resize-list .chip button {
+    background: none; border: none; color: var(--muted); padding: 0; cursor: pointer;
+    font-size: 14px; line-height: 1;
+  }
+  .resize-list .chip button:hover { color: var(--text); }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Bildstapel-Verarbeitung</h1>
+    <button id="btnAdd" class="primary">Bilder hinzufügen</button>
+    <input id="fileInput" type="file" accept="image/*" multiple class="hidden" />
+    <span id="countInfo" style="color:var(--muted); font-size:12px;"></span>
+  </header>
+
+  <main>
+    <div id="dropzone" class="dropzone">
+      Bilder hierher ziehen oder <strong>Bilder hinzufügen</strong> klicken.
+    </div>
+    <div id="gallery" class="gallery"></div>
+    <div id="emptyHint" class="empty">Noch keine Bilder geladen.</div>
+  </main>
+
+  <aside>
+    <h2>Export</h2>
+
+    <div class="field">
+      <label for="format">Format</label>
+      <select id="format">
+        <option value="jpeg">JPEG</option>
+        <option value="png">PNG</option>
+        <option value="webp">WebP</option>
+      </select>
+    </div>
+
+    <div class="field" id="qualityField">
+      <label for="quality">Qualität: <span id="qualityVal">0.9</span></label>
+      <input id="quality" type="range" min="0.1" max="1" step="0.01" value="0.9" />
+    </div>
+
+    <div class="field">
+      <label for="suffix">Suffix (wird unverändert angehängt)</label>
+      <input id="suffix" type="text" value="" placeholder="z.B. --bearbeitet" />
+      <div class="hint">Beispiel: Name + Suffix + "_512px.jpg"</div>
+    </div>
+
+    <div class="field">
+      <label for="resizeInput">Zusätzliche Auflösungen (Breiten in px)</label>
+      <div class="row">
+        <input id="resizeInput" type="number" min="1" step="1" placeholder="z.B. 512" />
+        <button id="btnAddResize" style="flex:none;">Hinzufügen</button>
+      </div>
+      <div class="resize-list" id="resizeList"></div>
+      <div class="hint">Wenn gesetzt, werden nur diese Versionen exportiert.</div>
+    </div>
+
+    <hr class="divider" />
+
+    <div class="field">
+      <button id="btnApplyAll" style="width:100%;">Editor-Ops auf gesamten Stapel anwenden</button>
+      <div class="hint" id="applyAllHint">Öffne ein Bild im Editor, um Ops stapelweit anzuwenden.</div>
+    </div>
+
+    <hr class="divider" />
+
+    <button id="btnExport" class="primary" style="width:100%;" disabled>ZIP exportieren</button>
+    <div id="exportStatus" class="status"></div>
+  </aside>
+</div>
+
+<!-- Editor-Modal -->
+<div id="editorModal" class="modal-backdrop">
+  <div class="modal">
+    <div class="row" style="margin-bottom:14px;">
+      <h2 id="editorTitle" style="margin:0;">Bearbeiten</h2>
+      <span style="flex:none;color:var(--muted);font-size:12px;" id="editorDims"></span>
+    </div>
+
+    <div class="editor-grid">
+      <div>
+        <div class="editor-preview" id="editorPreview">
+          <span class="loading">Lade Vorschau …</span>
+        </div>
+        <div style="margin-top:10px;color:var(--muted);font-size:12px;" id="editorPreviewInfo"></div>
+      </div>
+
+      <div>
+        <div class="op-section">
+          <h3>Angewandte Schritte</h3>
+          <ul class="steps-list" id="stepsList"></ul>
+        </div>
+
+        <div class="op-section">
+          <h3>Zuschneiden</h3>
+          <div class="row">
+            <div><label>X</label><input id="cropX" type="number" min="0" step="1" /></div>
+            <div><label>Y</label><input id="cropY" type="number" min="0" step="1" /></div>
+          </div>
+          <div class="row" style="margin-top:6px;">
+            <div><label>Breite</label><input id="cropW" type="number" min="1" step="1" /></div>
+            <div><label>Höhe</label><input id="cropH" type="number" min="1" step="1" /></div>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <button id="btnAddCrop" style="flex:1;">Zuschneiden anwenden</button>
+          </div>
+          <div class="hint">Koordinaten beziehen sich auf das Ergebnis der vorherigen Schritte.</div>
+        </div>
+
+        <div class="op-section">
+          <h3>Rotation</h3>
+          <div class="row">
+            <button data-rot="90" style="flex:1;">90°</button>
+            <button data-rot="180" style="flex:1;">180°</button>
+            <button data-rot="270" style="flex:1;">270°</button>
+          </div>
+        </div>
+
+        <div class="op-section">
+          <h3>Farbe entfernen</h3>
+          <div class="row">
+            <input id="rmColorHex" type="color" value="#ffffff" />
+            <div style="flex:1;">
+              <label>Toleranz: <span id="rmTolVal">10</span></label>
+              <input id="rmColorTol" type="range" min="0" max="100" step="1" value="10" />
+            </div>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <button id="btnAddRemoveColor" style="flex:1;">Farbe entfernen anwenden</button>
+          </div>
+        </div>
+
+        <div class="op-section">
+          <h3>Resize</h3>
+          <div class="row">
+            <div><label>Breite</label><input id="resizeW" type="number" min="1" step="1" /></div>
+            <div><label>Höhe</label><input id="resizeH" type="number" min="1" step="1" /></div>
+          </div>
+          <div class="row" style="margin-top:6px;">
+            <label style="display:flex;align-items:center;gap:6px;color:var(--text);">
+              <input id="resizeKeepRatio" type="checkbox" checked /> Seitenverhältnis beibehalten
+            </label>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <button id="btnAddResizeOp" style="flex:1;">Resize anwenden</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="editor-actions">
+      <button id="btnEditorRemoveLast" class="left danger" disabled>Letzten Schritt entfernen</button>
+      <button id="btnEditorCancel">Abbrechen</button>
+      <button id="btnEditorApply" class="primary">Übernehmen</button>
+    </div>
+    <div id="editorStatus" class="status"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+ *  State
+ * ============================================================ */
+
+/** @type {Array<{id:string,name:string,sourceBlob:Blob,sourceBitmap:ImageBitmap,committedOps:Op[],draftOps:Op[]|null,thumbnailURL:string}>} */
+const images = [];
+
+/** @type {{format:'jpeg'|'png'|'webp',quality:number,resizeList:number[],suffix:string}} */
+const exportSettings = {
+  format: 'jpeg',
+  quality: 0.9,
+  resizeList: [],
+  suffix: '',
+};
+
+// Worker
+let worker = null;
+let workerMsgId = 0;
+const pendingWorker = new Map();
+
+// Editor state
+let editor = {
+  imageId: null,
+  draftOps: [],       // Kopie der committedOps + Änderungen
+  baseBitmap: null,   // sourceBitmap
+  previewBitmap: null,
+  previewURL: null,
+  debounceTimer: null,
+  working: false,
+};
+
+/* ============================================================
+ *  Utils
+ * ============================================================ */
+
+function uuid() {
+  return crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2) + Date.now();
+}
+
+function stripExt(name) {
+  const i = name.lastIndexOf('.');
+  return i > 0 ? name.slice(0, i) : name;
+}
+
+function extFor(format) {
+  return format === 'jpeg' ? 'jpg' : format;
+}
+
+function mimeFor(format) {
+  return format === 'jpeg' ? 'image/jpeg' : 'image/' + format;
+}
+
+function opLabel(op) {
+  switch (op.type) {
+    case 'crop': return `Zuschneiden (${Math.round(op.w)}×${Math.round(op.h)} @ ${Math.round(op.x)},${Math.round(op.y)})`;
+    case 'rotate': return `Rotation ${op.deg}°`;
+    case 'resize': return `Resize ${Math.round(op.w)}×${Math.round(op.h)}`;
+    case 'removeColor': return `Farbe entfernen ${op.hex} (Tol ${op.tolerance})`;
+    default: return op.type;
+  }
+}
+
+function opLabelShort(op) {
+  switch (op.type) {
+    case 'crop': return `Crop ${Math.round(op.w)}×${Math.round(op.h)}`;
+    case 'rotate': return `Rot ${op.deg}°`;
+    case 'resize': return `Resize ${Math.round(op.w)}×${Math.round(op.h)}`;
+    case 'removeColor': return `Farbe ${op.hex}`;
+    default: return op.type;
+  }
+}
+
+/* ============================================================
+ *  Worker plumbing
+ * ============================================================ */
+
+function ensureWorker() {
+  if (worker) return worker;
+  worker = new Worker('worker.js');
+  worker.onmessage = (e) => {
+    const { id, bitmap, error } = e.data;
+    const p = pendingWorker.get(id);
+    if (!p) return;
+    pendingWorker.delete(id);
+    if (error) p.reject(new Error(error));
+    else p.resolve(bitmap);
+  };
+  worker.onerror = (err) => {
+    // Fehler an alle wartenden weiterreichen
+    for (const [, p] of pendingWorker) p.reject(err);
+    pendingWorker.clear();
+  };
+  return worker;
+}
+
+function runOps(bitmap, ops) {
+  return new Promise((resolve, reject) => {
+    const id = ++workerMsgId;
+    pendingWorker.set(id, { resolve, reject });
+    ensureWorker().postMessage({ id, bitmap, ops }, [bitmap]);
+  });
+}
+
+/* ============================================================
+ *  Image loading
+ * ============================================================ */
+
+async function addFiles(fileList) {
+  const files = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+  for (const file of files) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      // Thumbnail erzeugen (max 256px)
+      const thumbBitmap = await makeThumb(bitmap, 256);
+      const thumbBlob = await bitmapToBlob(thumbBitmap, 'image/jpeg', 0.8);
+      thumbBitmap.close?.();
+      const img = {
+        id: uuid(),
+        name: stripExt(file.name),
+        sourceBlob: file,
+        sourceBitmap: bitmap,
+        committedOps: [],
+        draftOps: null,
+        thumbnailURL: URL.createObjectURL(thumbBlob),
+      };
+      images.push(img);
+    } catch (err) {
+      console.error('Fehler beim Laden', file.name, err);
+    }
+  }
+  renderGallery();
+}
+
+async function makeThumb(bitmap, max) {
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const c = new OffscreenCanvas(w, h);
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  return c.transferToImageBitmap();
+}
+
+function bitmapToBlob(bitmap, type, quality) {
+  const c = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const ctx = c.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0);
+  return c.convertToBlob({ type, quality });
+}
+
+/* ============================================================
+ *  Gallery rendering
+ * ============================================================ */
+
+const galleryEl = document.getElementById('gallery');
+const emptyHintEl = document.getElementById('emptyHint');
+const countInfoEl = document.getElementById('countInfo');
+const btnExport = document.getElementById('btnExport');
+
+function renderGallery() {
+  countInfoEl.textContent = images.length ? `${images.length} Bild${images.length === 1 ? '' : 'er'}` : '';
+  emptyHintEl.classList.toggle('hidden', images.length > 0);
+  btnExport.disabled = images.length === 0;
+
+  galleryEl.innerHTML = '';
+  for (const img of images) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.id = img.id;
+
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
+    const tImg = document.createElement('img');
+    tImg.src = img.thumbnailURL;
+    tImg.alt = img.name;
+    thumb.appendChild(tImg);
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = img.name;
+    name.title = img.name;
+    const opsBadge = document.createElement('div');
+    opsBadge.className = 'ops-badge';
+    opsBadge.textContent = img.committedOps.length
+      ? img.committedOps.map(opLabelShort).join(' · ')
+      : 'keine Ops';
+    meta.appendChild(name);
+    meta.appendChild(opsBadge);
+
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    const btnEdit = document.createElement('button');
+    btnEdit.textContent = 'Bearbeiten';
+    btnEdit.onclick = () => openEditor(img.id);
+    const btnRemove = document.createElement('button');
+    btnRemove.textContent = 'Entfernen';
+    btnRemove.className = 'danger';
+    btnRemove.onclick = () => removeImage(img.id);
+    actions.appendChild(btnEdit);
+    actions.appendChild(btnRemove);
+
+    card.appendChild(thumb);
+    card.appendChild(meta);
+    card.appendChild(actions);
+    galleryEl.appendChild(card);
+  }
+}
+
+function removeImage(id) {
+  const i = images.findIndex(x => x.id === id);
+  if (i < 0) return;
+  const img = images[i];
+  URL.revokeObjectURL(img.thumbnailURL);
+  img.sourceBitmap.close?.();
+  images.splice(i, 1);
+  if (editor.imageId === id) closeEditor();
+  renderGallery();
+  updateApplyAllAvailability();
+}
+
+/* ============================================================
+ *  Editor
+ * ============================================================ */
+
+const editorModal = document.getElementById('editorModal');
+const editorTitle = document.getElementById('editorTitle');
+const editorDims = document.getElementById('editorDims');
+const editorPreview = document.getElementById('editorPreview');
+const editorPreviewInfo = document.getElementById('editorPreviewInfo');
+const stepsList = document.getElementById('stepsList');
+const editorStatus = document.getElementById('editorStatus');
+const btnEditorRemoveLast = document.getElementById('btnEditorRemoveLast');
+const btnEditorApply = document.getElementById('btnEditorApply');
+
+const cropXEl = document.getElementById('cropX');
+const cropYEl = document.getElementById('cropY');
+const cropWEl = document.getElementById('cropW');
+const cropHEl = document.getElementById('cropH');
+
+const rmColorHex = document.getElementById('rmColorHex');
+const rmColorTol = document.getElementById('rmColorTol');
+const rmTolVal = document.getElementById('rmTolVal');
+
+const resizeWEl = document.getElementById('resizeW');
+const resizeHEl = document.getElementById('resizeH');
+const resizeKeepRatio = document.getElementById('resizeKeepRatio');
+
+function openEditor(id) {
+  const img = images.find(x => x.id === id);
+  if (!img) return;
+  editor.imageId = id;
+  editor.draftOps = img.committedOps.map(op => ({ ...op }));
+  editor.baseBitmap = img.sourceBitmap;
+  editor.previewBitmap = null;
+  if (editor.previewURL) { URL.revokeObjectURL(editor.previewURL); editor.previewURL = null; }
+  editorModal.classList.add('open');
+  editorTitle.textContent = img.name;
+  editorDims.textContent = `${img.sourceBitmap.width} × ${img.sourceBitmap.height} px`;
+  editorPreview.innerHTML = '<span class="loading">Lade Vorschau …</span>';
+  editorPreviewInfo.textContent = '';
+  editorStatus.textContent = '';
+  editorStatus.className = 'status';
+
+  // Crop-Felder initialisieren
+  cropXEl.value = 0;
+  cropYEl.value = 0;
+  cropWEl.value = img.sourceBitmap.width;
+  cropHEl.value = img.sourceBitmap.height;
+
+  // Resize-Felder
+  resizeWEl.value = img.sourceBitmap.width;
+  resizeHEl.value = img.sourceBitmap.height;
+
+  renderSteps();
+  schedulePreview();
+  updateEditorButtons();
+}
+
+function closeEditor() {
+  editor.imageId = null;
+  editor.draftOps = [];
+  editor.previewBitmap = null;
+  if (editor.previewURL) { URL.revokeObjectURL(editor.previewURL); editor.previewURL = null; }
+  editorModal.classList.remove('open');
+  updateApplyAllAvailability();
+}
+
+function renderSteps() {
+  stepsList.innerHTML = '';
+  if (!editor.draftOps.length) {
+    const li = document.createElement('li');
+    li.className = 'empty-step';
+    li.textContent = 'Noch keine Schritte.';
+    stepsList.appendChild(li);
+    return;
+  }
+  editor.draftOps.forEach((op, idx) => {
+    const li = document.createElement('li');
+    const l = document.createElement('span');
+    l.className = 'label';
+    l.textContent = `${idx + 1}. ${opLabel(op)}`;
+    const v = document.createElement('span');
+    v.className = 'val';
+    v.textContent = '';
+    li.appendChild(l);
+    li.appendChild(v);
+    stepsList.appendChild(li);
+  });
+}
+
+function updateEditorButtons() {
+  btnEditorRemoveLast.disabled = editor.draftOps.length === 0;
+}
+
+/* --- Preview pipeline (debounced) --- */
+
+function schedulePreview() {
+  clearTimeout(editor.debounceTimer);
+  editor.debounceTimer = setTimeout(buildPreview, 120);
+}
+
+async function buildPreview() {
+  if (!editor.imageId) return;
+  if (editor.working) { schedulePreview(); return; }
+  editor.working = true;
+  editorStatus.textContent = 'Berechne Vorschau …';
+  editorStatus.className = 'status';
+  try {
+    // Bitmap kopieren, da Worker sie transferiert
+    const src = editor.baseBitmap;
+    const clone = await createImageBitmap(src);
+    const ops = editor.draftOps.map(op => ({ ...op }));
+    const result = await runOps(clone, ops);
+    editor.previewBitmap = result;
+    const blob = await bitmapToBlob(result, 'image/png');
+    if (editor.previewURL) URL.revokeObjectURL(editor.previewURL);
+    editor.previewURL = URL.createObjectURL(blob);
+    editorPreview.innerHTML = '';
+    const im = document.createElement('img');
+    im.src = editor.previewURL;
+    im.alt = 'Vorschau';
+    editorPreview.appendChild(im);
+    editorPreviewInfo.textContent = `Ergebnis: ${result.width} × ${result.height} px`;
+    editorDims.textContent = `${result.width} × ${result.height} px`;
+    editorStatus.textContent = '';
+    // Crop max anpassen
+    cropXEl.max = Math.max(0, result.width - 1);
+    cropYEl.max = Math.max(0, result.height - 1);
+    cropWEl.max = result.width;
+    cropHEl.max = result.height;
+  } catch (err) {
+    console.error(err);
+    editorStatus.textContent = 'Vorschau-Fehler: ' + err.message;
+    editorStatus.className = 'status error';
+  } finally {
+    editor.working = false;
+  }
+}
+
+/* --- Op-Additionen --- */
+
+document.getElementById('btnAddCrop').onclick = () => {
+  const x = parseInt(cropXEl.value, 10);
+  const y = parseInt(cropYEl.value, 10);
+  const w = parseInt(cropWEl.value, 10);
+  const h = parseInt(cropHEl.value, 10);
+  if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0 || x < 0 || y < 0) {
+    editorStatus.textContent = 'Ungültige Crop-Werte.';
+    editorStatus.className = 'status error';
+    return;
+  }
+  editor.draftOps.push({ type: 'crop', x, y, w, h });
+  renderSteps();
+  updateEditorButtons();
+  schedulePreview();
+};
+
+document.querySelectorAll('[data-rot]').forEach(btn => {
+  btn.onclick = () => {
+    const deg = parseInt(btn.dataset.rot, 10);
+    editor.draftOps.push({ type: 'rotate', deg });
+    renderSteps();
+    updateEditorButtons();
+    schedulePreview();
+  };
+});
+
+rmColorTol.oninput = () => { rmTolVal.textContent = rmColorTol.value; };
+
+document.getElementById('btnAddRemoveColor').onclick = () => {
+  editor.draftOps.push({
+    type: 'removeColor',
+    hex: rmColorHex.value,
+    tolerance: parseInt(rmColorTol.value, 10),
+  });
+  renderSteps();
+  updateEditorButtons();
+  schedulePreview();
+};
+
+// Resize: keepRatio-Logik
+resizeWEl.oninput = () => {
+  if (!resizeKeepRatio.checked) return;
+  const img = images.find(x => x.id === editor.imageId);
+  if (!img) return;
+  const ratio = img.sourceBitmap.height / img.sourceBitmap.width;
+  const w = parseInt(resizeWEl.value, 10);
+  if (Number.isFinite(w) && w > 0) {
+    resizeHEl.value = Math.max(1, Math.round(w * ratio));
+  }
+};
+resizeHEl.oninput = () => {
+  if (!resizeKeepRatio.checked) return;
+  const img = images.find(x => x.id === editor.imageId);
+  if (!img) return;
+  const ratio = img.sourceBitmap.width / img.sourceBitmap.height;
+  const h = parseInt(resizeHEl.value, 10);
+  if (Number.isFinite(h) && h > 0) {
+    resizeWEl.value = Math.max(1, Math.round(h * ratio));
+  }
+};
+
+document.getElementById('btnAddResizeOp').onclick = () => {
+  const w = parseInt(resizeWEl.value, 10);
+  const h = parseInt(resizeHEl.value, 10);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+    editorStatus.textContent = 'Ungültige Resize-Werte.';
+    editorStatus.className = 'status error';
+    return;
+  }
+  editor.draftOps.push({ type: 'resize', w, h });
+  renderSteps();
+  updateEditorButtons();
+  schedulePreview();
+};
+
+btnEditorRemoveLast.onclick = () => {
+  editor.draftOps.pop();
+  renderSteps();
+  updateEditorButtons();
+  schedulePreview();
+};
+
+document.getElementById('btnEditorCancel').onclick = () => closeEditor();
+
+btnEditorApply.onclick = () => {
+  const img = images.find(x => x.id === editor.imageId);
+  if (!img) return;
+  img.committedOps = editor.draftOps.map(op => ({ ...op }));
+  // Thumbnail aktualisieren
+  refreshThumbnail(img);
+  closeEditor();
+  renderGallery();
+  updateApplyAllAvailability();
+};
+
+async function refreshThumbnail(img) {
+  try {
+    const clone = await createImageBitmap(img.sourceBitmap);
+    const result = await runOps(clone, img.committedOps.map(op => ({ ...op })));
+    const thumb = await makeThumb(result, 256);
+    result.close?.();
+    const blob = await bitmapToBlob(thumb, 'image/jpeg', 0.8);
+    thumb.close?.();
+    URL.revokeObjectURL(img.thumbnailURL);
+    img.thumbnailURL = URL.createObjectURL(blob);
+  } catch (err) {
+    console.error('Thumbnail-Refresh fehlgeschlagen', err);
+  }
+}
+
+/* ============================================================
+ *  "Ops auf gesamten Stapel anwenden"
+ * ============================================================ */
+
+const btnApplyAll = document.getElementById('btnApplyAll');
+const applyAllHint = document.getElementById('applyAllHint');
+
+function updateApplyAllAvailability() {
+  // Verfügbar, wenn es ein Bild gibt, dessen committedOps nicht leer sind
+  // (bzw. wenn ein Bild im Editor ist). Wir nehmen das zuletzt bearbeitete Bild.
+  const has = images.some(img => img.committedOps.length > 0);
+  btnApplyAll.disabled = !has;
+  applyAllHint.textContent = has
+    ? 'Wendet die Ops des zuletzt bearbeiteten Bildes auf alle anderen an.'
+    : 'Öffne ein Bild im Editor, um Ops stapelweit anzuwenden.';
+}
+
+btnApplyAll.onclick = async () => {
+  // Quelle: das Bild mit den meisten committedOps (oder das erste mit welchen)
+  const source = images
+    .filter(img => img.committedOps.length > 0)
+    .sort((a, b) => b.committedOps.length - a.committedOps.length)[0];
+  if (!source) return;
+  const ops = source.committedOps.map(op => ({ ...op }));
+  if (!confirm(`Ops (${ops.length}) von "${source.name}" auf alle ${images.length} Bilder anwenden?`)) return;
+
+  for (const img of images) {
+    if (img === source) continue;
+    img.committedOps = ops.map(op => ({ ...op }));
+    await refreshThumbnail(img);
+  }
+  renderGallery();
+};
+
+/* ============================================================
+ *  Export
+ * ============================================================ */
+
+const formatEl = document.getElementById('format');
+const qualityEl = document.getElementById('quality');
+const qualityValEl = document.getElementById('qualityVal');
+const qualityField = document.getElementById('qualityField');
+const suffixEl = document.getElementById('suffix');
+const resizeInput = document.getElementById('resizeInput');
+const btnAddResize = document.getElementById('btnAddResize');
+const resizeListEl = document.getElementById('resizeList');
+const exportStatus = document.getElementById('exportStatus');
+
+formatEl.onchange = () => {
+  exportSettings.format = formatEl.value;
+  qualityField.classList.toggle('hidden', exportSettings.format === 'png');
+};
+qualityEl.oninput = () => {
+  exportSettings.quality = parseFloat(qualityEl.value);
+  qualityValEl.textContent = exportSettings.quality.toFixed(2);
+};
+suffixEl.oninput = () => {
+  exportSettings.suffix = suffixEl.value;
+};
+
+function renderResizeList() {
+  resizeListEl.innerHTML = '';
+  for (const w of exportSettings.resizeList) {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    const label = document.createElement('span');
+    label.textContent = w + 'px';
+    const rm = document.createElement('button');
+    rm.textContent = '×';
+    rm.title = 'Entfernen';
+    rm.onclick = () => {
+      exportSettings.resizeList = exportSettings.resizeList.filter(x => x !== w);
+      renderResizeList();
+    };
+    chip.appendChild(label);
+    chip.appendChild(rm);
+    resizeListEl.appendChild(chip);
+  }
+}
+
+btnAddResize.onclick = () => {
+  const w = parseInt(resizeInput.value, 10);
+  if (!Number.isFinite(w) || w <= 0) return;
+  if (exportSettings.resizeList.includes(w)) return;
+  exportSettings.resizeList.push(w);
+  exportSettings.resizeList.sort((a, b) => a - b);
+  resizeInput.value = '';
+  renderResizeList();
+};
+
+btnExport.onclick = async () => {
+  if (images.length === 0) return;
+  btnExport.disabled = true;
+  exportStatus.className = 'status';
+  exportStatus.textContent = 'Exportiere …';
+
+  try {
+    const zip = new JSZip();
+    const format = exportSettings.format;
+    const quality = exportSettings.quality;
+    const suffix = exportSettings.suffix; // unverändert
+    const mime = mimeFor(format);
+    const ext = extFor(format);
+    const resizeList = exportSettings.resizeList.slice();
+    const totalJobs = images.length * (resizeList.length || 1);
+    let done = 0;
+
+    for (const img of images) {
+      // Basis-Bitmap durch committedOps
+      const clone = await createImageBitmap(img.sourceBitmap);
+      const edited = await runOps(clone, img.committedOps.map(op => ({ ...op })));
+
+      if (resizeList.length === 0) {
+        // Originalgröße exportieren
+        const blob = await bitmapToBlob(edited, mime, quality);
+        const fname = `${img.name}${suffix}.${ext}`;
+        zip.file(fname, blob);
+        done++;
+        exportStatus.textContent = `Exportiere … ${done}/${totalJobs}`;
+      } else {
+        for (const targetW of resizeList) {
+          // Höhe proportional
+          const ratio = edited.height / edited.width;
+          const targetH = Math.max(1, Math.round(targetW * ratio));
+          const resized = await runOps(
+            await createImageBitmap(edited),
+            [{ type: 'resize', w: targetW, h: targetH }]
+          );
+          const blob = await bitmapToBlob(resized, mime, quality);
+          const fname = `${img.name}${suffix}_${targetW}px.${ext}`;
+          zip.file(fname, blob);
+          resized.close?.();
+          done++;
+          exportStatus.textContent = `Exportiere … ${done}/${totalJobs}`;
+        }
+      }
+      edited.close?.();
+    }
+
+    exportStatus.textContent = 'Erzeuge ZIP …';
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(zipBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'bilder-export.zip';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    exportStatus.textContent = 'Fertig. ZIP heruntergeladen.';
+  } catch (err) {
+    console.error(err);
+    exportStatus.textContent = 'Export-Fehler: ' + err.message;
+    exportStatus.className = 'status error';
+  } finally {
+    btnExport.disabled = images.length === 0;
+  }
+};
+
+/* ============================================================
+ *  File Input / Drag & Drop
+ * ============================================================ */
+
+const fileInput = document.getElementById('fileInput');
+const dropzone = document.getElementById('dropzone');
+
+document.getElementById('btnAdd').onclick = () => fileInput.click();
+fileInput.onchange = () => {
+  if (fileInput.files && fileInput.files.length) {
+    addFiles(fileInput.files);
+    fileInput.value = '';
+  }
+};
+
+['dragenter', 'dragover'].forEach(ev =>
+  dropzone.addEventListener(ev, e => {
+    e.preventDefault();
+    dropzone.classList.add('drag');
+  })
+);
+['dragleave', 'drop'].forEach(ev =>
+  dropzone.addEventListener(ev, e => {
+    e.preventDefault();
+    dropzone.classList.remove('drag');
+  })
+);
+dropzone.addEventListener('drop', e => {
+  if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
+});
+dropzone.addEventListener('click', () => fileInput.click());
+
+// Verhindere, dass Datei-Drop auf der Seite navigiert
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => e.preventDefault());
+
+/* ============================================================
+ *  Init
+ * ============================================================ */
+
+renderResizeList();
+renderGallery();
+updateApplyAllAvailability();
+</script>
+</body>
+</html>
