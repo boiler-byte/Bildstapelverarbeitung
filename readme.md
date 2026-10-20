@@ -1,3 +1,6 @@
+@todo Farbe entfernen funktioniert unbefriedigend
+@todo cropping wirkt ungenau ohne Zoom-Funktion
+
 # ROLLE
 
 Du bist ein Senior Frontend-Entwickler. Baue ein vollständiges, produktionsreifes

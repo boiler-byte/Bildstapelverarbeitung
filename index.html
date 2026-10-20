@@ -223,7 +223,7 @@
   .steps-list li .val { color: var(--text); font-family: ui-monospace, Menlo, monospace; }
   .steps-list .empty-step { color: var(--muted); font-style: italic; background: transparent; border: none; padding: 0; }
 
-  .op-section { margin-bottom: 16px; }
+  .op-section { margin-bottom: 16px; display: none; /* ungünstige Implementierung > ausblenden */ }
   .op-section h3 { margin-bottom: 8px; }
 
   .editor-actions {
@@ -1366,6 +1366,49 @@ window.addEventListener('drop', e => e.preventDefault());
 renderResizeList();
 renderGallery();
 updateApplyAllAvailability();
+
+/* ============================================================
+ *  Paste aus der Zwischenablage (Strg+V)
+ * ============================================================ */
+
+window.addEventListener('paste', async (e) => {
+  // Nur eingreifen, wenn nicht gerade in ein Eingabefeld eingefügt wird
+  const active = document.activeElement;
+  const isEditable =
+    active &&
+    (active.tagName === 'INPUT' ||
+     active.tagName === 'TEXTAREA' ||
+     active.isContentEditable);
+  if (isEditable) return;
+
+  const items = e.clipboardData?.items;
+  if (!items || items.length === 0) return;
+
+  const files = [];
+  for (const item of items) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) files.push(file);
+    }
+  }
+  if (files.length === 0) return;
+
+  e.preventDefault();
+
+  // Optional: sinnvollen Dateinamen vergeben, da Zwischenablage-Bilder
+  // oft "image.png" o. ä. heißen
+  const stamp = new Date()
+    .toISOString()
+    .slice(0, 19)
+    .replace(/[:T]/g, '-');
+  const namedFiles = files.map((f, i) => {
+    const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+    const base = f.name && f.name !== 'image.png' ? f.name : `eingefuegt-${stamp}${files.length > 1 ? '-' + (i + 1) : ''}.${ext}`;
+    return new File([f], base, { type: f.type });
+  });
+
+  await addFiles(namedFiles);
+});
 </script>
 </body>
 </html>
