@@ -171,6 +171,44 @@
   }
   .editor-preview canvas.crop-overlay { position: absolute; inset: 0; pointer-events: none; }
 
+  /* Crop selection UI */
+  .crop-container {
+    position: relative;
+    display: inline-block;
+    user-select: none;
+    touch-action: none;
+  }
+  .crop-container img {
+    display: block;
+    max-width: 100%;
+    max-height: 520px;
+    pointer-events: none;
+  }
+  .crop-selection {
+    position: absolute;
+    border: 2px solid var(--accent);
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.5);
+    cursor: move;
+    box-sizing: border-box;
+  }
+  .crop-selection .crop-handle {
+    position: absolute;
+    width: 12px; height: 12px;
+    background: var(--accent);
+    border: 2px solid #fff;
+    border-radius: 2px;
+    box-sizing: border-box;
+  }
+  .crop-selection .crop-handle.nw { top: -6px; left: -6px; cursor: nwse-resize; }
+  .crop-selection .crop-handle.ne { top: -6px; right: -6px; cursor: nesw-resize; }
+  .crop-selection .crop-handle.sw { bottom: -6px; left: -6px; cursor: nesw-resize; }
+  .crop-selection .crop-handle.se { bottom: -6px; right: -6px; cursor: nwse-resize; }
+  .crop-selection .crop-handle.n { top: -6px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+  .crop-selection .crop-handle.s { bottom: -6px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+  .crop-selection .crop-handle.w { top: 50%; left: -6px; transform: translateY(-50%); cursor: ew-resize; }
+  .crop-selection .crop-handle.e { top: 50%; right: -6px; transform: translateY(-50%); cursor: ew-resize; }
+  .crop-selection.hidden { display: none; }
+
   .steps-list {
     list-style: none; padding: 0; margin: 0 0 14px;
     display: flex; flex-direction: column; gap: 6px;
@@ -313,7 +351,7 @@
           <div class="row" style="margin-top:8px;">
             <button id="btnAddCrop" style="flex:1;">Zuschneiden anwenden</button>
           </div>
-          <div class="hint">Koordinaten beziehen sich auf das Ergebnis der vorherigen Schritte.</div>
+          <div class="hint">Koordinaten beziehen sich auf das Ergebnis der vorherigen Schritte. Ziehe das Rechteck im Bild, um den Bereich festzulegen.</div>
         </div>
 
         <div class="op-section">
@@ -398,6 +436,12 @@ let editor = {
   previewURL: null,
   debounceTimer: null,
   working: false,
+  // Crop selection state (in preview pixel coordinates)
+  cropSelection: { x: 0, y: 0, w: 0, h: 0 },
+  previewNaturalWidth: 0,
+  previewNaturalHeight: 0,
+  previewDisplayWidth: 0,
+  previewDisplayHeight: 0,
 };
 
 /* ============================================================
@@ -641,6 +685,9 @@ function openEditor(id) {
   cropWEl.value = img.sourceBitmap.width;
   cropHEl.value = img.sourceBitmap.height;
 
+  // Crop selection initialisieren
+  editor.cropSelection = { x: 0, y: 0, w: img.sourceBitmap.width, h: img.sourceBitmap.height };
+
   // Resize-Felder
   resizeWEl.value = img.sourceBitmap.width;
   resizeHEl.value = img.sourceBitmap.height;
@@ -709,19 +756,32 @@ async function buildPreview() {
     const blob = await bitmapToBlob(result, 'image/png');
     if (editor.previewURL) URL.revokeObjectURL(editor.previewURL);
     editor.previewURL = URL.createObjectURL(blob);
-    editorPreview.innerHTML = '';
-    const im = document.createElement('img');
-    im.src = editor.previewURL;
-    im.alt = 'Vorschau';
-    editorPreview.appendChild(im);
+    
+    // Preview mit Crop-Overlay aufbauen
+    buildPreviewWithCropOverlay(blob, result.width, result.height);
+    
     editorPreviewInfo.textContent = `Ergebnis: ${result.width} × ${result.height} px`;
     editorDims.textContent = `${result.width} × ${result.height} px`;
     editorStatus.textContent = '';
+    
     // Crop max anpassen
     cropXEl.max = Math.max(0, result.width - 1);
     cropYEl.max = Math.max(0, result.height - 1);
     cropWEl.max = result.width;
     cropHEl.max = result.height;
+    
+    // Crop selection auf das neue volle Bild zurücksetzen,
+    // da sich die Dimensionen durch die Ops geändert haben können.
+    editor.cropSelection = { x: 0, y: 0, w: result.width, h: result.height };
+    clampCropSelection(); // synchronisiert auch die Input-Felder
+    
+    // Resize-Felder an neue Bildgröße anpassen (falls leer oder ungültig)
+    if (!resizeWEl.value || parseInt(resizeWEl.value, 10) > result.width) {
+      resizeWEl.value = result.width;
+    }
+    if (!resizeHEl.value || parseInt(resizeHEl.value, 10) > result.height) {
+      resizeHEl.value = result.height;
+    }
   } catch (err) {
     console.error(err);
     editorStatus.textContent = 'Vorschau-Fehler: ' + err.message;
@@ -731,18 +791,280 @@ async function buildPreview() {
   }
 }
 
+function buildPreviewWithCropOverlay(blob, naturalWidth, naturalHeight) {
+  editor.previewNaturalWidth = naturalWidth;
+  editor.previewNaturalHeight = naturalHeight;
+  
+  editorPreview.innerHTML = '';
+  
+  const container = document.createElement('div');
+  container.className = 'crop-container';
+  container.id = 'cropContainer';
+  
+  const img = document.createElement('img');
+  img.src = editor.previewURL;
+  img.alt = 'Vorschau';
+  img.id = 'previewImg';
+  img.draggable = false;
+  
+  const selection = document.createElement('div');
+  selection.className = 'crop-selection';
+  selection.id = 'cropSelection';
+  
+  // Handles erstellen
+  const handles = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+  for (const h of handles) {
+    const handle = document.createElement('div');
+    handle.className = `crop-handle ${h}`;
+    handle.dataset.handle = h;
+    selection.appendChild(handle);
+  }
+  
+  container.appendChild(img);
+  container.appendChild(selection);
+  editorPreview.appendChild(container);
+  
+  // Nach dem Laden die Anzeigegröße ermitteln und Selektion positionieren
+  const updateSelectionPosition = () => {
+    const rect = img.getBoundingClientRect();
+    editor.previewDisplayWidth = rect.width;
+    editor.previewDisplayHeight = rect.height;
+    updateCropSelectionUI();
+  };
+  
+  if (img.complete) {
+    updateSelectionPosition();
+  } else {
+    img.onload = updateSelectionPosition;
+  }
+  
+  // Event listeners für Crop-Interaktion
+  setupCropInteraction(container, selection, img);
+}
+
+/* --- Crop Selection Logic --- */
+
+function updateCropSelectionUI() {
+  const selectionEl = document.getElementById('cropSelection');
+  const img = document.getElementById('previewImg');
+  if (!selectionEl || !img) return;
+  
+  const rect = img.getBoundingClientRect();
+  const containerRect = img.parentElement.getBoundingClientRect();
+  
+  // Skalierung von Bildpixel zu Anzeigepixel
+  const scaleX = rect.width / editor.previewNaturalWidth;
+  const scaleY = rect.height / editor.previewNaturalHeight;
+  
+  const sel = editor.cropSelection;
+  
+  selectionEl.style.left = (rect.left - containerRect.left + sel.x * scaleX) + 'px';
+  selectionEl.style.top = (rect.top - containerRect.top + sel.y * scaleY) + 'px';
+  selectionEl.style.width = (sel.w * scaleX) + 'px';
+  selectionEl.style.height = (sel.h * scaleY) + 'px';
+}
+
+function clampCropSelection() {
+  const sel = editor.cropSelection;
+  const maxW = editor.previewNaturalWidth;
+  const maxH = editor.previewNaturalHeight;
+  
+  sel.w = Math.max(1, Math.min(sel.w, maxW));
+  sel.h = Math.max(1, Math.min(sel.h, maxH));
+  sel.x = Math.max(0, Math.min(sel.x, maxW - sel.w));
+  sel.y = Math.max(0, Math.min(sel.y, maxH - sel.h));
+  
+  updateCropSelectionUI();
+  syncCropInputsFromSelection();
+}
+
+function syncCropInputsFromSelection() {
+  const sel = editor.cropSelection;
+  cropXEl.value = Math.round(sel.x);
+  cropYEl.value = Math.round(sel.y);
+  cropWEl.value = Math.round(sel.w);
+  cropHEl.value = Math.round(sel.h);
+}
+
+function syncSelectionFromCropInputs() {
+  const x = parseFloat(cropXEl.value) || 0;
+  const y = parseFloat(cropYEl.value) || 0;
+  const w = parseFloat(cropWEl.value) || 1;
+  const h = parseFloat(cropHEl.value) || 1;
+  
+  editor.cropSelection = {
+    x: Math.max(0, Math.min(x, editor.previewNaturalWidth - 1)),
+    y: Math.max(0, Math.min(y, editor.previewNaturalHeight - 1)),
+    w: Math.max(1, Math.min(w, editor.previewNaturalWidth)),
+    h: Math.max(1, Math.min(h, editor.previewNaturalHeight)),
+  };
+  
+  clampCropSelection();
+  updateCropSelectionUI();
+}
+
+/* --- Crop Interaction (drag & resize) --- */
+
+let cropDragState = null;
+
+function setupCropInteraction(container, selectionEl, img) {
+  const getImageCoords = (e) => {
+    const rect = img.getBoundingClientRect();
+    const scaleX = editor.previewNaturalWidth / rect.width;
+    const scaleY = editor.previewNaturalHeight / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+    };
+  };
+  
+  const startDrag = (e, mode, handle) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const coords = getImageCoords(e);
+    cropDragState = {
+      mode, // 'move' oder 'resize'
+      handle, // welcher Handle ('nw', 'se', etc.) oder null für move
+      startX: coords.x,
+      startY: coords.y,
+      startSel: { ...editor.cropSelection },
+    };
+    container.style.cursor = mode === 'move' ? 'grabbing' : 'crosshair';
+  };
+  
+  const onMouseDown = (e) => {
+    const target = e.target;
+    if (target.classList.contains('crop-handle')) {
+      startDrag(e, 'resize', target.dataset.handle);
+    } else if (target === selectionEl || selectionEl.contains(target)) {
+      startDrag(e, 'move', null);
+    }
+  };
+  
+  const onMouseMove = (e) => {
+    if (!cropDragState) return;
+    e.preventDefault();
+    
+    const coords = getImageCoords(e);
+    const dx = coords.x - cropDragState.startX;
+    const dy = coords.y - cropDragState.startY;
+    const start = cropDragState.startSel;
+    
+    let newSel = { ...editor.cropSelection };
+    
+    if (cropDragState.mode === 'move') {
+      newSel.x = start.x + dx;
+      newSel.y = start.y + dy;
+    } else if (cropDragState.mode === 'resize') {
+      const h = cropDragState.handle;
+      let left = start.x;
+      let top = start.y;
+      let right = start.x + start.w;
+      let bottom = start.y + start.h;
+      
+      if (h.includes('w')) left = start.x + dx;
+      if (h.includes('e')) right = start.x + start.w + dx;
+      if (h.includes('n')) top = start.y + dy;
+      if (h.includes('s')) bottom = start.y + start.h + dy;
+      
+      // Mindestgröße
+      const minSize = 10;
+      if (right - left < minSize) {
+        if (h.includes('w')) left = right - minSize;
+        else right = left + minSize;
+      }
+      if (bottom - top < minSize) {
+        if (h.includes('n')) top = bottom - minSize;
+        else bottom = top + minSize;
+      }
+      
+      newSel.x = left;
+      newSel.y = top;
+      newSel.w = right - left;
+      newSel.h = bottom - top;
+    }
+    
+    // Clamping auf Bildgrenzen
+    const maxW = editor.previewNaturalWidth;
+    const maxH = editor.previewNaturalHeight;
+    
+    if (newSel.x < 0) { newSel.w += newSel.x; newSel.x = 0; }
+    if (newSel.y < 0) { newSel.h += newSel.y; newSel.y = 0; }
+    if (newSel.x + newSel.w > maxW) newSel.w = maxW - newSel.x;
+    if (newSel.y + newSel.h > maxH) newSel.h = maxH - newSel.y;
+    
+    newSel.w = Math.max(1, newSel.w);
+    newSel.h = Math.max(1, newSel.h);
+    
+    editor.cropSelection = newSel;
+    updateCropSelectionUI();
+    syncCropInputsFromSelection();
+  };
+  
+  const onMouseUp = () => {
+    if (cropDragState) {
+      cropDragState = null;
+      container.style.cursor = '';
+    }
+  };
+  
+  container.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+  
+  // Touch support
+  container.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      const fakeEvent = { clientX: touch.clientX, clientY: touch.clientY, target: e.target, preventDefault: () => e.preventDefault(), stopPropagation: () => e.stopPropagation() };
+      onMouseDown(fakeEvent);
+    }
+  }, { passive: false });
+  
+  window.addEventListener('touchmove', (e) => {
+    if (cropDragState && e.touches.length === 1) {
+      const touch = e.touches[0];
+      const fakeEvent = { clientX: touch.clientX, clientY: touch.clientY, preventDefault: () => e.preventDefault() };
+      onMouseMove(fakeEvent);
+    }
+  }, { passive: false });
+  
+  window.addEventListener('touchend', onMouseUp);
+}
+
+/* --- Input field sync --- */
+
+// Inputs ändern -> Selection aktualisieren
+[cropXEl, cropYEl, cropWEl, cropHEl].forEach(el => {
+  el.addEventListener('input', () => {
+    if (!editor.imageId) return;
+    syncSelectionFromCropInputs();
+  });
+});
+
+// Auf window resize reagieren (Anzeigegröße ändert sich)
+window.addEventListener('resize', () => {
+  if (editor.imageId && editor.previewNaturalWidth > 0) {
+    updateCropSelectionUI();
+  }
+});
+
 /* --- Op-Additionen --- */
 
 document.getElementById('btnAddCrop').onclick = () => {
-  const x = parseInt(cropXEl.value, 10);
-  const y = parseInt(cropYEl.value, 10);
-  const w = parseInt(cropWEl.value, 10);
-  const h = parseInt(cropHEl.value, 10);
-  if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0 || x < 0 || y < 0) {
+  // Aktuelle Selection verwenden
+  const sel = editor.cropSelection;
+  const x = Math.round(sel.x);
+  const y = Math.round(sel.y);
+  const w = Math.round(sel.w);
+  const h = Math.round(sel.h);
+  
+  if (w <= 0 || h <= 0) {
     editorStatus.textContent = 'Ungültige Crop-Werte.';
     editorStatus.className = 'status error';
     return;
   }
+  
   editor.draftOps.push({ type: 'crop', x, y, w, h });
   renderSteps();
   updateEditorButtons();
@@ -852,7 +1174,6 @@ const applyAllHint = document.getElementById('applyAllHint');
 
 function updateApplyAllAvailability() {
   // Verfügbar, wenn es ein Bild gibt, dessen committedOps nicht leer sind
-  // (bzw. wenn ein Bild im Editor ist). Wir nehmen das zuletzt bearbeitete Bild.
   const has = images.some(img => img.committedOps.length > 0);
   btnApplyAll.disabled = !has;
   applyAllHint.textContent = has

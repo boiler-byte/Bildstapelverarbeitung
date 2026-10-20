@@ -1,9 +1,3 @@
-
-@todo suffix enthält einen underscore zu viel
-@todo extra auflösungen werden zusätzlich zum bild erstellt
-@todo Vorschaubild, und darunter: angewandte Schritte, zuschneiden, rotation, farbe entfernen
-
-
 # ROLLE
 
 Du bist ein Senior Frontend-Entwickler. Baue ein vollständiges, produktionsreifes
@@ -36,7 +30,10 @@ Format – optional in mehreren Auflösungen – als flaches ZIP herunterladen.
 - Keine Animationen außer schnellen Hover/Focus-Transitions (<150ms).
 - Sprache der gesamten UI: **Deutsch**.
 
-- Der Bearbeiten-Dialog zeigt das Vorschaubild und darunter die angewandten Schritte, Zuschneiden, Rotation, Farbe entfernen
+- Der Bearbeiten-Dialog zeigt das Vorschaubild und darunter die 
+    - angewandten Schritte (Platzsparend und mit Entfernen-Button),
+    - Zuschneiden (mit Rechteckauswahl)
+    - Rotation, Farbe entfernen @todo
 
 ---
 
