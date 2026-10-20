@@ -146,7 +146,7 @@
   .modal-backdrop.open { display: flex; }
   .modal {
     background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
-    width: min(920px, 94vw); max-height: 92vh; overflow: auto;
+    width: 94vw; max-height: 92vh; overflow: auto;
     padding: 20px;
   }
   .editor-grid {
@@ -181,7 +181,7 @@
   .crop-container img {
     display: block;
     max-width: 100%;
-    max-height: 520px;
+    max-height: calc(100vh - 280px);
     pointer-events: none;
   }
   .crop-selection {
@@ -223,7 +223,7 @@
   .steps-list li .val { color: var(--text); font-family: ui-monospace, Menlo, monospace; }
   .steps-list .empty-step { color: var(--muted); font-style: italic; background: transparent; border: none; padding: 0; }
 
-  .op-section { margin-bottom: 16px; display: none; /* ungünstige Implementierung > ausblenden */ }
+  .op-section { margin-bottom: 16px;  }
   .op-section h3 { margin-bottom: 8px; }
 
   .editor-actions {
@@ -250,6 +250,9 @@
   .resize-list .chip button:hover { color: var(--text); }
 
   .hidden { display: none !important; }
+
+  /* Fix Breite von #resizeH im Bild Bearbeiten Dialog */
+  .row input[type=number] { width: 100%; }
 </style>
 </head>
 <body>
@@ -333,7 +336,7 @@
       </div>
 
       <div>
-        <div class="op-section">
+        <div class="op-section" style="display:none">
           <h3>Angewandte Schritte</h3>
           <ul class="steps-list" id="stepsList"></ul>
         </div>
@@ -364,17 +367,18 @@
         </div>
 
         <div class="op-section">
-          <h3>Farbe entfernen</h3>
+          <h3>Farbe nach Alpha</h3>
           <div class="row">
             <input id="rmColorHex" type="color" value="#ffffff" />
             <div style="flex:1;">
-              <label>Toleranz: <span id="rmTolVal">10</span></label>
-              <input id="rmColorTol" type="range" min="0" max="100" step="1" value="10" />
+              <label>Schwellwert: <span id="rmTolVal">0</span></label>
+              <input id="rmColorTol" type="range" min="0" max="100" step="1" value="0" />
             </div>
           </div>
           <div class="row" style="margin-top:8px;">
-            <button id="btnAddRemoveColor" style="flex:1;">Farbe entfernen anwenden</button>
+            <button id="btnAddColorToAlpha" style="flex:1;">Farbe nach Alpha anwenden</button>
           </div>
+          <div class="hint">Entfernt die Zielfarbe weich (wie GIMP). Ideal für einfarbige Hintergründe. Bei 0 wird nur exakt die Zielfarbe entfernt.</div>
         </div>
 
         <div class="op-section">
@@ -470,7 +474,8 @@ function opLabel(op) {
     case 'crop': return `Zuschneiden (${Math.round(op.w)}×${Math.round(op.h)} @ ${Math.round(op.x)},${Math.round(op.y)})`;
     case 'rotate': return `Rotation ${op.deg}°`;
     case 'resize': return `Resize ${Math.round(op.w)}×${Math.round(op.h)}`;
-    case 'removeColor': return `Farbe entfernen ${op.hex} (Tol ${op.tolerance})`;
+    case 'colorToAlpha': return `Farbe nach Alpha ${op.hex} (Schwelle ${op.tolerance})`;
+    case 'removeColor': return `Farbe nach Alpha ${op.hex} (Schwelle ${op.tolerance})`;
     default: return op.type;
   }
 }
@@ -480,7 +485,8 @@ function opLabelShort(op) {
     case 'crop': return `Crop ${Math.round(op.w)}×${Math.round(op.h)}`;
     case 'rotate': return `Rot ${op.deg}°`;
     case 'resize': return `Resize ${Math.round(op.w)}×${Math.round(op.h)}`;
-    case 'removeColor': return `Farbe ${op.hex}`;
+    case 'colorToAlpha': return `Alpha ${op.hex}`;
+    case 'removeColor': return `Alpha ${op.hex}`;
     default: return op.type;
   }
 }
@@ -527,7 +533,7 @@ async function addFiles(fileList) {
       const bitmap = await createImageBitmap(file);
       // Thumbnail erzeugen (max 256px)
       const thumbBitmap = await makeThumb(bitmap, 256);
-      const thumbBlob = await bitmapToBlob(thumbBitmap, 'image/jpeg', 0.8);
+      const thumbBlob = await bitmapToBlob(thumbBitmap, 'image/webp', 0.8);
       thumbBitmap.close?.();
       const img = {
         id: uuid(),
@@ -1083,9 +1089,9 @@ document.querySelectorAll('[data-rot]').forEach(btn => {
 
 rmColorTol.oninput = () => { rmTolVal.textContent = rmColorTol.value; };
 
-document.getElementById('btnAddRemoveColor').onclick = () => {
+document.getElementById('btnAddColorToAlpha').onclick = () => {
   editor.draftOps.push({
-    type: 'removeColor',
+    type: 'colorToAlpha',
     hex: rmColorHex.value,
     tolerance: parseInt(rmColorTol.value, 10),
   });
@@ -1139,29 +1145,48 @@ btnEditorRemoveLast.onclick = () => {
 
 document.getElementById('btnEditorCancel').onclick = () => closeEditor();
 
-btnEditorApply.onclick = () => {
+btnEditorApply.onclick = async () => {
   const img = images.find(x => x.id === editor.imageId);
   if (!img) return;
-  img.committedOps = editor.draftOps.map(op => ({ ...op }));
-  // Thumbnail aktualisieren
-  refreshThumbnail(img);
-  closeEditor();
-  renderGallery();
-  updateApplyAllAvailability();
+
+  btnEditorApply.disabled = true;
+  editorStatus.textContent = 'Aktualisiere Vorschau …';
+  editorStatus.className = 'status';
+
+  try {
+    img.committedOps = editor.draftOps.map(op => ({ ...op }));
+
+    // WICHTIG: awaiten, damit das neue Thumb fertig ist,
+    // bevor die Galerie gerendert wird
+    await refreshThumbnail(img);
+
+    closeEditor();
+    renderGallery();
+    updateApplyAllAvailability();
+  } catch (err) {
+    console.error(err);
+    editorStatus.textContent = 'Fehler beim Aktualisieren: ' + err.message;
+    editorStatus.className = 'status error';
+  } finally {
+    btnEditorApply.disabled = false;
+  }
 };
 
 async function refreshThumbnail(img) {
+  let result = null;
+  let thumb = null;
   try {
     const clone = await createImageBitmap(img.sourceBitmap);
-    const result = await runOps(clone, img.committedOps.map(op => ({ ...op })));
-    const thumb = await makeThumb(result, 256);
-    result.close?.();
-    const blob = await bitmapToBlob(thumb, 'image/jpeg', 0.8);
-    thumb.close?.();
+    result = await runOps(clone, img.committedOps.map(op => ({ ...op })));
+
+    thumb = await makeThumb(result, 256);
+    const blob = await bitmapToBlob(thumb, 'image/webp', 0.8);
+
     URL.revokeObjectURL(img.thumbnailURL);
     img.thumbnailURL = URL.createObjectURL(blob);
-  } catch (err) {
-    console.error('Thumbnail-Refresh fehlgeschlagen', err);
+  } finally {
+    result?.close?.();
+    thumb?.close?.();
   }
 }
 
