@@ -295,7 +295,7 @@
     <div class="field">
       <label for="suffix">Suffix (wird unverändert angehängt)</label>
       <input id="suffix" type="text" value="" placeholder="z.B. --bearbeitet" />
-      <div class="hint">Beispiel: Name + Suffix + "_512px.jpg"</div>
+      <div class="hint">Beispiel: Name + Suffix + "512.jpg"</div>
     </div>
 
     <div class="field">
@@ -1321,7 +1321,7 @@ btnExport.onclick = async () => {
             [{ type: 'resize', w: targetW, h: targetH }]
           );
           const blob = await bitmapToBlob(resized, mime, quality);
-          const fname = `${img.name}${suffix}_${targetW}px.${ext}`;
+          const fname = `${img.name}${suffix}${targetW}.${ext}`;
           zip.file(fname, blob);
           resized.close?.();
           done++;
