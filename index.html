@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Bildstapel-Verarbeitung</title>
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="jszip.min.js"></script>
 <style>
   :root {
     --bg: #1a1a1d;
@@ -70,6 +70,22 @@
   }
   header h1 { margin: 0; }
 
+  /* Hilfe-Button in der Topbar */
+  #btnHelp {
+    margin-left: auto;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 15px;
+    line-height: 1;
+    flex: none;
+  }
+
   main { overflow: auto; padding: 20px; }
   aside {
     background: var(--panel);
@@ -78,17 +94,39 @@
     overflow: auto;
   }
 
-  .dropzone {
-    border: 2px dashed var(--border);
-    border-radius: 6px;
-    padding: 32px;
-    text-align: center;
-    color: var(--muted);
-    margin-bottom: 20px;
-    transition: border-color 120ms, background 120ms;
-    cursor: pointer;
+  /* ============================================================
+   *  Vollbild-Drop-Zone (nur bei Datei-Drag sichtbar)
+   * ============================================================ */
+  .drop-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(26, 26, 29, 0.85);
+    z-index: 100;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;          /* Events gehen an darunterliegende Elemente */
   }
-  .dropzone.drag { border-color: var(--accent); background: #1f2630; }
+  .drop-overlay.active { display: flex; }
+  .drop-overlay .drop-overlay-inner {
+    border: 3px dashed var(--accent);
+    border-radius: 12px;
+    padding: 60px 80px;
+    text-align: center;
+    background: rgba(36, 36, 40, 0.92);
+    box-shadow: 0 0 40px rgba(74, 158, 255, 0.25);
+    max-width: 90vw;
+  }
+  .drop-overlay .drop-overlay-inner h2 {
+    margin: 0 0 8px;
+    font-size: 22px;
+    color: var(--accent);
+  }
+  .drop-overlay .drop-overlay-inner p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
 
   .gallery {
     display: grid;
@@ -149,39 +187,117 @@
     width: 94vw; max-height: 92vh; overflow: auto;
     padding: 20px;
   }
+
+  /* Hilfe-Dialog */
+  .help-modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px 24px;
+    width: 92vw;
+    max-width: 560px;
+    max-height: 88vh;
+    overflow: auto;
+  }
+  .help-modal h2 {
+    margin-top: 0;
+    margin-bottom: 14px;
+  }
+  .help-modal .help-section {
+    margin-bottom: 14px;
+  }
+  .help-modal .help-section h3 {
+    font-size: 12px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin: 0 0 6px;
+  }
+  .help-modal ul {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--text);
+  }
+  .help-modal li {
+    margin-bottom: 4px;
+    line-height: 1.5;
+  }
+  .help-modal li:last-child { margin-bottom: 0; }
+  .help-modal kbd {
+    background: #1f1f23;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: var(--text);
+  }
+  .help-modal .help-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+
+  /* minmax(0, 1fr) verhindert horizontales Wachstum der linken Spalte */
   .editor-grid {
     display: grid;
-    grid-template-columns: 1fr 320px;
+    grid-template-columns: minmax(0, 1fr) 320px;
     gap: 20px;
   }
+  /* WICHTIG: Grid-Items dürfen unter ihre min-content-Größe schrumpfen,
+     sonst zieht z.B. das gezoomte Bild die Track-Breite nach oben. */
+  .editor-grid > * {
+    min-width: 0;
+  }
+
+  /* feste Höhe + safe center + overflow auto */
   .editor-preview {
     background: #151517 repeating-conic-gradient(#1c1c1f 0% 25%, #151517 0% 50%) 50% / 20px 20px;
     border: 1px solid var(--border); border-radius: 6px;
+    height: 60vh;
     min-height: 320px;
-    display: flex; align-items: center; justify-content: center;
-    overflow: hidden;
+    max-height: 600px;
+    display: flex;
+    align-items: safe center;
+    justify-content: safe center;
+    overflow: auto;
     position: relative;
+    min-width: 0;   /* NEU: siehe oben */
+    max-width: 100%;
   }
-  .editor-preview img { max-width: 100%; max-height: 520px; display: block; }
   .editor-preview .loading {
-    color: var(--muted); font-size: 12px;
+    color: var(--muted); font-size: 12px; margin: auto;
   }
   .editor-preview .overlay {
     position: absolute; inset: 0; pointer-events: none;
   }
   .editor-preview canvas.crop-overlay { position: absolute; inset: 0; pointer-events: none; }
 
+  /* Klickbarer Titel */
+  #editorTitle {
+    cursor: pointer;
+    transition: color 120ms;
+  }
+  #editorTitle:hover { color: var(--accent); }
+  #editorName {
+    font-size: 16px;
+    font-weight: 600;
+    padding: 2px 6px;
+  }
+
   /* Crop selection UI */
   .crop-container {
     position: relative;
     display: inline-block;
+    flex: none;
     user-select: none;
     touch-action: none;
   }
   .crop-container img {
     display: block;
-    max-width: 100%;
-    max-height: calc(100vh - 280px);
     pointer-events: none;
   }
   .crop-selection {
@@ -211,6 +327,25 @@
   .crop-selection .crop-handle.w { top: 50%; left: -6px; transform: translateY(-50%); cursor: ew-resize; }
   .crop-selection .crop-handle.e { top: 50%; right: -6px; transform: translateY(-50%); cursor: ew-resize; }
   .crop-selection.hidden { display: none; }
+
+  /* Zoom-Balken */
+  .zoom-bar {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 10px;
+    padding: 6px 10px;
+    background: #1f1f23;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    min-width: 0;   /* NEU: verhindert, dass der Balken die Spalte aufbläht */
+    max-width: 100%;
+  }
+  .zoom-bar label { margin-bottom: 0; flex: none; }
+  .zoom-bar input[type=range] { flex: 1; min-width: 0; }
+  .zoom-bar #zoomVal {
+    min-width: 44px; text-align: right; font-size: 12px;
+    color: var(--muted); font-family: ui-monospace, Menlo, monospace;
+  }
+  .zoom-bar button { padding: 3px 8px; font-size: 12px; }
 
   .steps-list {
     list-style: none; padding: 0; margin: 0 0 14px;
@@ -256,6 +391,136 @@
 
   /* Fix Breite von #resizeH im Bild Bearbeiten Dialog */
   .row input[type=number] { width: 100%; }
+
+  /* Gitter-Overlay */
+  .grid-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .grid-overlay .cell {
+    position: absolute;
+    border: 1px solid var(--accent);
+    box-sizing: border-box;
+  }
+  .grid-overlay .cell::before {
+    content: attr(data-label);
+    position: absolute;
+    top: 2px; left: 2px;
+    font-size: 10px;
+    color: #fff;
+    background: rgba(0,0,0,.55);
+    padding: 0 3px;
+    border-radius: 2px;
+    font-family: ui-monospace, Menlo, monospace;
+  }
+
+  /* Toolbar-Umschalter */
+  .tool-tabs {
+    display: flex; gap: 6px; margin-bottom: 14px;
+  }
+  .tool-tabs button {
+    flex: 1; font-size: 12px; padding: 5px 8px;
+  }
+  .tool-tabs button.active {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+  }
+
+  /* ============================================================
+   *  Responsive Seitenmenü (Export)
+   * ============================================================ */
+
+  .btn-menu {
+    display: none;
+    font-size: 18px;
+    line-height: 1;
+    padding: 6px 12px;
+  }
+
+  .btn-close-aside {
+    display: none;
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--muted);
+    font-size: 20px;
+    line-height: 1;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .btn-close-aside:hover { color: var(--text); border-color: var(--border); }
+
+  .aside-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.5);
+    z-index: 35;
+  }
+
+  @media (max-width: 860px) {
+    .app { grid-template-columns: 1fr; }
+
+    .btn-menu        { display: inline-block; }
+    .btn-close-aside { display: block; }
+
+    aside {
+      position: fixed;
+      top: 0; right: 0; bottom: 0;
+      width: 340px;
+      max-width: 90vw;
+      transform: translateX(100%);
+      visibility: hidden;
+      transition: transform 200ms ease, visibility 0s linear 200ms;
+      z-index: 40;
+      box-shadow: -4px 0 24px rgba(0,0,0,.5);
+    }
+    aside.open {
+      transform: translateX(0);
+      visibility: visible;
+      transition: transform 200ms ease, visibility 0s linear 0s;
+    }
+    .aside-backdrop.open { display: block; }
+    body.aside-open { overflow: hidden; }
+
+    /* ---------- Editor-Modal: einspaltig ---------- */
+    .modal {
+      padding: 14px;
+      width: 96vw;
+    }
+    .editor-grid {
+      /* WICHTIG: minmax(0, 1fr) statt 1fr — sonst wächst die Spalte
+         mit dem gezoomten Bild (auto-Minimum). */
+      grid-template-columns: minmax(0, 1fr);
+      gap: 14px;
+    }
+    .editor-preview {
+      height: 45vh;
+      min-height: 200px;
+      max-height: 420px;
+    }
+    .editor-actions {
+      flex-wrap: wrap;
+    }
+  }
+
+  /* ---------- Sehr kleine Screens (Phones): Aktions-Buttons gestapelt ---------- */
+  @media (max-width: 480px) {
+    header { padding: 12px 14px; gap: 10px; flex-wrap: wrap; }
+    main   { padding: 14px; }
+
+    .editor-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .editor-actions .left { margin-right: 0; }
+    .editor-actions button { width: 100%; }
+
+    #editorDims { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -265,17 +530,22 @@
     <button id="btnAdd" class="primary">Bilder hinzufügen</button>
     <input id="fileInput" type="file" accept="image/*" multiple class="hidden" />
     <span id="countInfo" style="color:var(--muted); font-size:12px;"></span>
+    <button id="btnHelp" aria-label="Hilfe öffnen" title="Hilfe">?</button>
+    <button id="btnMenu" class="btn-menu" aria-label="Export-Menü öffnen"
+            aria-expanded="false" aria-controls="exportPanel">☰</button>
   </header>
 
   <main>
-    <div id="dropzone" class="dropzone">
-      Bilder hierher ziehen oder <strong>Bilder hinzufügen</strong> klicken.
-    </div>
     <div id="gallery" class="gallery"></div>
-    <div id="emptyHint" class="empty">Noch keine Bilder geladen.</div>
+    <div id="emptyHint" class="empty">
+      Noch keine Bilder geladen. Ziehe Bilder in das Fenster
+      oder klicke oben auf <strong>Bilder hinzufügen</strong>.
+    </div>
   </main>
 
-  <aside>
+  <div id="asideBackdrop" class="aside-backdrop"></div>
+  <aside id="exportPanel">
+    <button id="btnCloseMenu" class="btn-close-aside" aria-label="Menü schließen">×</button>
     <h2>Export</h2>
 
     <div class="field">
@@ -284,6 +554,7 @@
         <option value="jpeg">JPEG</option>
         <option value="png">PNG</option>
         <option value="webp">WebP</option>
+        <option value="svg">SVG (Vektorgrafik)</option>
       </select>
     </div>
 
@@ -292,13 +563,19 @@
       <input id="quality" type="range" min="0.1" max="1" step="0.01" value="0.9" />
     </div>
 
+    <div class="field hidden" id="svgAlphaField">
+      <label for="svgAlpha">Alpha-Schwelle: <span id="svgAlphaVal">128</span></label>
+      <input id="svgAlpha" type="range" min="1" max="254" step="1" value="128" />
+      <div class="hint">Pixel mit Alpha ≥ Schwelle werden vektorisiert. Höher = schärfere Kanten, niedriger = mehr weiche Details. Ideal nach "Farbe nach Alpha" ca. 96–160.</div>
+    </div>
+
     <div class="field">
       <label for="suffix">Suffix (wird unverändert angehängt)</label>
       <input id="suffix" type="text" value="" placeholder="z.B. --bearbeitet" />
       <div class="hint">Beispiel: Name + Suffix + "512.jpg"</div>
     </div>
 
-    <div class="field">
+    <div class="field" id="resizeField">
       <label for="resizeInput">Zusätzliche Auflösungen (Breiten in px)</label>
       <div class="row">
         <input id="resizeInput" type="number" min="1" step="1" placeholder="z.B. 512" />
@@ -326,7 +603,8 @@
 <div id="editorModal" class="modal-backdrop">
   <div class="modal">
     <div class="row" style="margin-bottom:14px;">
-      <h2 id="editorTitle" style="margin:0;">Bearbeiten</h2>
+      <h2 id="editorTitle" style="margin:0;" title="Klicken zum Bearbeiten">Bearbeiten</h2>
+      <input id="editorName" type="text" class="hidden" aria-label="Dateiname (ohne Endung)" />
       <span style="flex:none;color:var(--muted);font-size:12px;" id="editorDims"></span>
     </div>
 
@@ -335,68 +613,102 @@
         <div class="editor-preview" id="editorPreview">
           <span class="loading">Lade Vorschau …</span>
         </div>
+        <div class="zoom-bar">
+          <label for="zoomSlider">Zoom</label>
+          <input id="zoomSlider" type="range" min="10" max="400" step="1" value="100" />
+          <span id="zoomVal">Fit</span>
+          <button id="btnZoomFit" class="small" title="Auf Fenster einpassen">Fit</button>
+        </div>
         <div style="margin-top:10px;color:var(--muted);font-size:12px;" id="editorPreviewInfo"></div>
       </div>
 
       <div>
-        <div class="op-section" style="display:none">
-          <h3>Angewandte Schritte</h3>
-          <ul class="steps-list" id="stepsList"></ul>
+        <div class="tool-tabs">
+          <button id="tabOps" class="active">Bearbeiten</button>
+          <button id="tabGrid">Zerlegen</button>
         </div>
 
-        <div class="op-section">
-          <h3>Zuschneiden</h3>
-          <div class="row">
-            <div><label>X</label><input id="cropX" type="number" min="0" step="1" /></div>
-            <div><label>Y</label><input id="cropY" type="number" min="0" step="1" /></div>
+        <!-- Bearbeiten-Werkzeuge -->
+        <div id="opsTools">
+          <div class="op-section" style="display:none">
+            <h3>Angewandte Schritte</h3>
+            <ul class="steps-list" id="stepsList"></ul>
           </div>
-          <div class="row" style="margin-top:6px;">
-            <div><label>Breite</label><input id="cropW" type="number" min="1" step="1" /></div>
-            <div><label>Höhe</label><input id="cropH" type="number" min="1" step="1" /></div>
-          </div>
-          <div class="row" style="margin-top:8px;">
-            <button id="btnAddCrop" style="flex:1;">Zuschneiden anwenden</button>
-          </div>
-          <div class="hint">Koordinaten beziehen sich auf das Ergebnis der vorherigen Schritte. Ziehe das Rechteck im Bild, um den Bereich festzulegen.</div>
-        </div>
 
-        <div class="op-section">
-          <h3>Rotation</h3>
-          <div class="row">
-            <button data-rot="90" style="flex:1;">90°</button>
-            <button data-rot="180" style="flex:1;">180°</button>
-            <button data-rot="270" style="flex:1;">270°</button>
+          <div class="op-section">
+            <h3>Zuschneiden</h3>
+            <div class="row">
+              <div><label>X</label><input id="cropX" type="number" min="0" step="1" /></div>
+              <div><label>Y</label><input id="cropY" type="number" min="0" step="1" /></div>
+            </div>
+            <div class="row" style="margin-top:6px;">
+              <div><label>Breite</label><input id="cropW" type="number" min="1" step="1" /></div>
+              <div><label>Höhe</label><input id="cropH" type="number" min="1" step="1" /></div>
+            </div>
+            <div class="row" style="margin-top:8px;">
+              <button id="btnAddCrop" style="flex:1;">Zuschneiden anwenden</button>
+            </div>
+            <div class="hint">Koordinaten beziehen sich auf das Ergebnis der vorherigen Schritte. Ziehe das Rechteck im Bild, um den Bereich festzulegen.</div>
           </div>
-        </div>
 
-        <div class="op-section">
-          <h3>Farbe nach Alpha</h3>
-          <div class="row">
-            <input id="rmColorHex" type="color" value="#ffffff" />
-            <div style="flex:1;">
-              <label>Schwellwert: <span id="rmTolVal">0</span></label>
-              <input id="rmColorTol" type="range" min="0" max="100" step="1" value="0" />
+          <div class="op-section">
+            <h3>Rotation</h3>
+            <div class="row">
+              <button data-rot="90" style="flex:1;">90°</button>
+              <button data-rot="180" style="flex:1;">180°</button>
+              <button data-rot="270" style="flex:1;">270°</button>
             </div>
           </div>
-          <div class="row" style="margin-top:8px;">
-            <button id="btnAddColorToAlpha" style="flex:1;">Farbe nach Alpha anwenden</button>
+
+          <div class="op-section">
+            <h3>Farbe nach Alpha</h3>
+            <div class="row">
+              <input id="rmColorHex" type="color" value="#ffffff" />
+              <div style="flex:1;">
+                <label>Schwellwert: <span id="rmTolVal">0</span></label>
+                <input id="rmColorTol" type="range" min="0" max="100" step="1" value="0" />
+              </div>
+            </div>
+            <div class="row" style="margin-top:8px;">
+              <button id="btnAddColorToAlpha" style="flex:1;">Farbe nach Alpha anwenden</button>
+            </div>
+            <div class="hint">Entfernt die Zielfarbe weich (wie GIMP). Ideal für einfarbige Hintergründe. Bei 0 wird nur exakt die Zielfarbe entfernt.</div>
           </div>
-          <div class="hint">Entfernt die Zielfarbe weich (wie GIMP). Ideal für einfarbige Hintergründe. Bei 0 wird nur exakt die Zielfarbe entfernt.</div>
+
+          <div class="op-section">
+            <h3>Resize</h3>
+            <div class="row">
+              <div><label>Breite</label><input id="resizeW" type="number" min="1" step="1" /></div>
+              <div><label>Höhe</label><input id="resizeH" type="number" min="1" step="1" /></div>
+            </div>
+            <div class="row" style="margin-top:6px;">
+              <label style="display:flex;align-items:center;gap:6px;color:var(--text);">
+                <input id="resizeKeepRatio" type="checkbox" checked /> Seitenverhältnis beibehalten
+              </label>
+            </div>
+            <div class="row" style="margin-top:8px;">
+              <button id="btnAddResizeOp" style="flex:1;">Resize anwenden</button>
+            </div>
+          </div>
         </div>
 
-        <div class="op-section">
-          <h3>Resize</h3>
-          <div class="row">
-            <div><label>Breite</label><input id="resizeW" type="number" min="1" step="1" /></div>
-            <div><label>Höhe</label><input id="resizeH" type="number" min="1" step="1" /></div>
-          </div>
-          <div class="row" style="margin-top:6px;">
-            <label style="display:flex;align-items:center;gap:6px;color:var(--text);">
-              <input id="resizeKeepRatio" type="checkbox" checked /> Seitenverhältnis beibehalten
-            </label>
-          </div>
-          <div class="row" style="margin-top:8px;">
-            <button id="btnAddResizeOp" style="flex:1;">Resize anwenden</button>
+        <!-- Gitter-Werkzeuge -->
+        <div id="gridTools" class="hidden">
+          <div class="op-section">
+            <h3>Gitter</h3>
+            <div class="row">
+              <div><label>Offset X</label><input id="gridOffX" type="number" min="0" step="1" value="0" /></div>
+              <div><label>Offset Y</label><input id="gridOffY" type="number" min="0" step="1" value="0" /></div>
+            </div>
+            <div class="row" style="margin-top:6px;">
+              <div><label>Breite</label><input id="gridW" type="number" min="1" step="1" value="1" /></div>
+              <div><label>Höhe</label><input id="gridH" type="number" min="1" step="1" value="1" /></div>
+            </div>
+            <div class="row" style="margin-top:6px;">
+              <div><label>Spalten</label><input id="gridCols" type="number" min="1" step="1" value="1" /></div>
+              <div><label>Zeilen</label><input id="gridRows" type="number" min="1" step="1" value="1" /></div>
+            </div>
+            <div class="hint" id="gridInfo"></div>
           </div>
         </div>
       </div>
@@ -404,10 +716,79 @@
 
     <div class="editor-actions">
       <button id="btnEditorRemoveLast" class="left danger" disabled>Letzten Schritt entfernen</button>
+      <button id="btnGridSplit" class="left" style="display:none;">Zerlegen</button>
       <button id="btnEditorCancel">Abbrechen</button>
       <button id="btnEditorApply" class="primary">Übernehmen</button>
     </div>
     <div id="editorStatus" class="status"></div>
+  </div>
+</div>
+
+<!-- Hilfe-Modal -->
+<div id="helpModal" class="modal-backdrop">
+  <div class="help-modal" role="dialog" aria-labelledby="helpTitle" aria-modal="true">
+    <h2 id="helpTitle">Hilfe</h2>
+
+    <div class="help-section">
+      <h3>1. Bilder hinzufügen</h3>
+      <ul>
+        <li>Auf <strong>Bilder hinzufügen</strong> oben in der Leiste klicken.</li>
+        <li>Oder Bilddateien direkt in das Fenster ziehen (die ganze Seite wird zur Drop-Zone).</li>
+        <li>Oder aus der Zwischenablage einfügen: <kbd>Strg</kbd>+<kbd>V</kbd> (bzw. <kbd>Cmd</kbd>+<kbd>V</kbd>).</li>
+      </ul>
+    </div>
+
+    <div class="help-section">
+      <h3>2. Einzelbild bearbeiten</h3>
+      <ul>
+        <li>Auf einer Kachel auf <strong>Bearbeiten</strong> klicken.</li>
+        <li>Werkzeuge: Zuschneiden, Rotation, Farbe nach Alpha, Resize.</li>
+        <li>Schritte werden in Reihenfolge angewandt; der letzte lässt sich mit <strong>Letzten Schritt entfernen</strong> zurücknehmen.</li>
+        <li>Zum Zuschneiden: im Bild ein Rechteck aufziehen oder Werte eintippen, dann <strong>Zuschneiden anwenden</strong>.</li>
+        <li>Der Dateiname oben lässt sich anklicken und ändern.</li>
+        <li><strong>Übernehmen</strong> speichert die Schritte, <strong>Abbrechen</strong> verwirft sie.</li>
+      </ul>
+    </div>
+
+    <div class="help-section">
+      <h3>3. Bild zerlegen (Gitter)</h3>
+      <ul>
+        <li>Im Editor auf den Tab <strong>Zerlegen</strong> wechseln.</li>
+        <li>Zellgröße, Spalten/Zeilen und Offsets festlegen.</li>
+        <li><strong>Zerlegen</strong> ersetzt das Original durch die einzelnen Teilbilder im Stapel.</li>
+      </ul>
+    </div>
+
+    <div class="help-section">
+      <h3>4. Ops auf alle Bilder anwenden</h3>
+      <ul>
+        <li>Ein Bild wie gewünscht bearbeiten und übernehmen.</li>
+        <li>Im Export-Panel auf <strong>Editor-Ops auf gesamten Stapel anwenden</strong> klicken.</li>
+        <li>Die Schritte des zuletzt bearbeiteten Bildes werden dann auf alle anderen übertragen.</li>
+      </ul>
+    </div>
+
+    <div class="help-section">
+      <h3>5. Exportieren</h3>
+      <ul>
+        <li>Im Export-Panel Format (JPEG, PNG, WebP, SVG) wählen.</li>
+        <li>Bei JPEG/WebP die Qualität, bei SVG die Alpha-Schwelle anpassen.</li>
+        <li>Optional Suffix und zusätzliche Zielbreiten angeben — dann werden nur diese Versionen exportiert.</li>
+        <li><strong>ZIP exportieren</strong> lädt alle bearbeiteten Bilder gesammelt als ZIP herunter.</li>
+      </ul>
+    </div>
+
+    <div class="help-actions">
+      <button id="btnHelpClose" class="primary">Verstanden</button>
+    </div>
+  </div>
+</div>
+
+<!-- Vollbild-Drop-Overlay -->
+<div id="dropOverlay" class="drop-overlay" aria-hidden="true">
+  <div class="drop-overlay-inner">
+    <h2>Bilder hier ablegen</h2>
+    <p>Zum Hinzufügen zum Stapel loslassen.</p>
   </div>
 </div>
 
@@ -421,12 +802,13 @@
 /** @type {Array<{id:string,name:string,sourceBlob:Blob,sourceBitmap:ImageBitmap,committedOps:Op[],draftOps:Op[]|null,thumbnailURL:string}>} */
 const images = [];
 
-/** @type {{format:'jpeg'|'png'|'webp',quality:number,resizeList:number[],suffix:string}} */
+/** @type {{format:'jpeg'|'png'|'webp'|'svg',quality:number,resizeList:number[],suffix:string,svgAlphaThreshold:number}} */
 const exportSettings = {
   format: 'jpeg',
   quality: 0.9,
   resizeList: [],
   suffix: '',
+  svgAlphaThreshold: 128,
 };
 
 // Worker
@@ -437,18 +819,21 @@ const pendingWorker = new Map();
 // Editor state
 let editor = {
   imageId: null,
-  draftOps: [],       // Kopie der committedOps + Änderungen
-  baseBitmap: null,   // sourceBitmap
+  draftOps: [],
+  baseBitmap: null,
   previewBitmap: null,
   previewURL: null,
   debounceTimer: null,
   working: false,
-  // Crop selection state (in preview pixel coordinates)
+  mode: 'ops',
+  grid: { offX: 0, offY: 0, w: 1, h: 1, cols: 4, rows: 4 },
   cropSelection: { x: 0, y: 0, w: 0, h: 0 },
   previewNaturalWidth: 0,
   previewNaturalHeight: 0,
   previewDisplayWidth: 0,
   previewDisplayHeight: 0,
+  zoomFit: true,
+  zoomPercent: 100,
 };
 
 /* ============================================================
@@ -465,11 +850,14 @@ function stripExt(name) {
 }
 
 function extFor(format) {
-  return format === 'jpeg' ? 'jpg' : format;
+  if (format === 'jpeg') return 'jpg';
+  return format;
 }
 
 function mimeFor(format) {
-  return format === 'jpeg' ? 'image/jpeg' : 'image/' + format;
+  if (format === 'jpeg') return 'image/jpeg';
+  if (format === 'svg')  return 'image/svg+xml';
+  return 'image/' + format;
 }
 
 function opLabel(op) {
@@ -502,15 +890,14 @@ function ensureWorker() {
   if (worker) return worker;
   worker = new Worker('worker.js');
   worker.onmessage = (e) => {
-    const { id, bitmap, error } = e.data;
-    const p = pendingWorker.get(id);
+    const data = e.data;
+    const p = pendingWorker.get(data.id);
     if (!p) return;
-    pendingWorker.delete(id);
-    if (error) p.reject(new Error(error));
-    else p.resolve(bitmap);
+    pendingWorker.delete(data.id);
+    if (data.error) p.reject(new Error(data.error));
+    else p.resolve(data);
   };
   worker.onerror = (err) => {
-    // Fehler an alle wartenden weiterreichen
     for (const [, p] of pendingWorker) p.reject(err);
     pendingWorker.clear();
   };
@@ -520,8 +907,22 @@ function ensureWorker() {
 function runOps(bitmap, ops) {
   return new Promise((resolve, reject) => {
     const id = ++workerMsgId;
-    pendingWorker.set(id, { resolve, reject });
+    pendingWorker.set(id, {
+      resolve: (data) => resolve(data.bitmap),
+      reject,
+    });
     ensureWorker().postMessage({ id, bitmap, ops }, [bitmap]);
+  });
+}
+
+function runSvgTrace(bitmap, options) {
+  return new Promise((resolve, reject) => {
+    const id = ++workerMsgId;
+    pendingWorker.set(id, {
+      resolve: (data) => resolve(data.svgString),
+      reject,
+    });
+    ensureWorker().postMessage({ id, type: 'svg', bitmap, options }, [bitmap]);
   });
 }
 
@@ -534,7 +935,6 @@ async function addFiles(fileList) {
   for (const file of files) {
     try {
       const bitmap = await createImageBitmap(file);
-      // Thumbnail erzeugen (max 256px)
       const thumbBitmap = await makeThumb(bitmap, 256);
       const thumbBlob = await bitmapToBlob(thumbBitmap, 'image/webp', 0.8);
       thumbBitmap.close?.();
@@ -658,6 +1058,7 @@ const stepsList = document.getElementById('stepsList');
 const editorStatus = document.getElementById('editorStatus');
 const btnEditorRemoveLast = document.getElementById('btnEditorRemoveLast');
 const btnEditorApply = document.getElementById('btnEditorApply');
+const editorNameEl = document.getElementById('editorName');
 
 const cropXEl = document.getElementById('cropX');
 const cropYEl = document.getElementById('cropY');
@@ -672,6 +1073,25 @@ const resizeWEl = document.getElementById('resizeW');
 const resizeHEl = document.getElementById('resizeH');
 const resizeKeepRatio = document.getElementById('resizeKeepRatio');
 
+const tabOps = document.getElementById('tabOps');
+const tabGrid = document.getElementById('tabGrid');
+const opsTools = document.getElementById('opsTools');
+const gridTools = document.getElementById('gridTools');
+const btnGridSplit = document.getElementById('btnGridSplit');
+
+const gridOffXEl = document.getElementById('gridOffX');
+const gridOffYEl = document.getElementById('gridOffY');
+const gridWEl = document.getElementById('gridW');
+const gridHEl = document.getElementById('gridH');
+const gridColsEl = document.getElementById('gridCols');
+const gridRowsEl = document.getElementById('gridRows');
+const gridInfoEl = document.getElementById('gridInfo');
+
+// Zoom
+const zoomSlider = document.getElementById('zoomSlider');
+const zoomVal = document.getElementById('zoomVal');
+const btnZoomFit = document.getElementById('btnZoomFit');
+
 function openEditor(id) {
   const img = images.find(x => x.id === id);
   if (!img) return;
@@ -679,27 +1099,35 @@ function openEditor(id) {
   editor.draftOps = img.committedOps.map(op => ({ ...op }));
   editor.baseBitmap = img.sourceBitmap;
   editor.previewBitmap = null;
+  editor.zoomFit = true;
+  editor.zoomPercent = 100;
+  zoomSlider.value = 100;
+  zoomVal.textContent = 'Fit';
   if (editor.previewURL) { URL.revokeObjectURL(editor.previewURL); editor.previewURL = null; }
   editorModal.classList.add('open');
-  editorTitle.textContent = img.name;
+  editorTitle.textContent = img.name || 'Bearbeiten';
+  editorTitle.classList.remove('hidden');
+  editorNameEl.value = img.name;
+  editorNameEl.classList.add('hidden');
   editorDims.textContent = `${img.sourceBitmap.width} × ${img.sourceBitmap.height} px`;
   editorPreview.innerHTML = '<span class="loading">Lade Vorschau …</span>';
   editorPreviewInfo.textContent = '';
   editorStatus.textContent = '';
   editorStatus.className = 'status';
 
-  // Crop-Felder initialisieren
   cropXEl.value = 0;
   cropYEl.value = 0;
   cropWEl.value = img.sourceBitmap.width;
   cropHEl.value = img.sourceBitmap.height;
 
-  // Crop selection initialisieren
   editor.cropSelection = { x: 0, y: 0, w: img.sourceBitmap.width, h: img.sourceBitmap.height };
 
-  // Resize-Felder
   resizeWEl.value = img.sourceBitmap.width;
   resizeHEl.value = img.sourceBitmap.height;
+
+  editor.mode = 'ops';
+  editor.grid = { offX: 0, offY: 0, w: 1, h: 1, cols: 4, rows: 4 };
+  setEditorMode('ops');
 
   renderSteps();
   schedulePreview();
@@ -710,6 +1138,8 @@ function closeEditor() {
   editor.imageId = null;
   editor.draftOps = [];
   editor.previewBitmap = null;
+  editor.mode = 'ops';
+  document.querySelector('.grid-overlay')?.remove();
   if (editor.previewURL) { URL.revokeObjectURL(editor.previewURL); editor.previewURL = null; }
   editorModal.classList.remove('open');
   updateApplyAllAvailability();
@@ -742,6 +1172,184 @@ function updateEditorButtons() {
   btnEditorRemoveLast.disabled = editor.draftOps.length === 0;
 }
 
+/* --- Zoom-Logik --- */
+
+function computeFitPercent() {
+  if (!editor.previewNaturalWidth || !editor.previewNaturalHeight) return 100;
+  const rect = editorPreview.getBoundingClientRect();
+  const availW = Math.max(1, rect.width - 2);
+  const availH = Math.max(1, rect.height - 2);
+  const scale = Math.min(
+    availW / editor.previewNaturalWidth,
+    availH / editor.previewNaturalHeight,
+    1
+  );
+  return scale * 100;
+}
+
+function updateZoomSliderRange(fitPct) {
+  const minPct = Math.max(1, Math.floor(Math.min(10, fitPct / 2)));
+  zoomSlider.min = minPct;
+  zoomSlider.max = 400;
+}
+
+function updateZoomUI() {
+  if (editor.zoomFit) {
+    const fitPct = computeFitPercent();
+    updateZoomSliderRange(fitPct);
+    zoomSlider.value = Math.round(fitPct);
+    zoomVal.textContent = 'Fit';
+  } else {
+    updateZoomSliderRange(computeFitPercent());
+    zoomSlider.value = editor.zoomPercent;
+    zoomVal.textContent = Math.round(editor.zoomPercent) + '%';
+  }
+}
+
+function applyZoom() {
+  const img = document.getElementById('previewImg');
+  const container = document.getElementById('cropContainer');
+  if (!img || !container) return;
+
+  const pct = editor.zoomFit ? computeFitPercent() : editor.zoomPercent;
+  const scale = pct / 100;
+  img.style.width = (editor.previewNaturalWidth * scale) + 'px';
+  img.style.height = (editor.previewNaturalHeight * scale) + 'px';
+
+  requestAnimationFrame(() => {
+    const rect = img.getBoundingClientRect();
+    editor.previewDisplayWidth = rect.width;
+    editor.previewDisplayHeight = rect.height;
+
+    if (editor.mode === 'grid') updateGridOverlay();
+    else updateCropSelectionUI();
+
+    updateZoomUI();
+  });
+}
+
+zoomSlider.addEventListener('input', () => {
+  editor.zoomPercent = parseFloat(zoomSlider.value) || 100;
+  editor.zoomFit = false;
+  zoomVal.textContent = Math.round(editor.zoomPercent) + '%';
+  applyZoom();
+});
+
+btnZoomFit.addEventListener('click', () => {
+  editor.zoomFit = true;
+  applyZoom();
+});
+
+/* --- Modus-Umschaltung (Bearbeiten / Zerlegen) --- */
+
+function setEditorMode(mode) {
+  editor.mode = mode;
+  const isGrid = mode === 'grid';
+  tabOps.classList.toggle('active', !isGrid);
+  tabGrid.classList.toggle('active', isGrid);
+  opsTools.classList.toggle('hidden', isGrid);
+  gridTools.classList.toggle('hidden', !isGrid);
+  btnGridSplit.style.display = isGrid ? '' : 'none';
+  btnEditorApply.classList.toggle('hidden', isGrid);
+
+  if (isGrid) {
+    initGridFromPreview();
+    document.getElementById('cropSelection')?.classList.add('hidden');
+    updateGridOverlay();
+  } else {
+    document.querySelector('.grid-overlay')?.remove();
+    document.getElementById('cropSelection')?.classList.remove('hidden');
+    if (editor.previewNaturalWidth > 0) updateCropSelectionUI();
+  }
+}
+
+tabOps.onclick = () => { if (editor.imageId) setEditorMode('ops'); };
+tabGrid.onclick = () => { if (editor.imageId) setEditorMode('grid'); };
+
+/* --- Gitter-Logik --- */
+
+function initGridFromPreview() {
+  const W = editor.previewNaturalWidth || 1;
+  const H = editor.previewNaturalHeight || 1;
+  editor.grid.offX = 0;
+  editor.grid.offY = 0;
+  editor.grid.cols = editor.grid.cols || 4;
+  editor.grid.rows = editor.grid.rows || 4;
+  editor.grid.w = Math.max(1, Math.floor(W / editor.grid.cols));
+  editor.grid.h = Math.max(1, Math.floor(H / editor.grid.rows));
+  syncGridInputs();
+}
+
+function syncGridInputs() {
+  const g = editor.grid;
+  gridOffXEl.value = Math.round(g.offX);
+  gridOffYEl.value = Math.round(g.offY);
+  gridWEl.value = Math.round(g.w);
+  gridHEl.value = Math.round(g.h);
+  gridColsEl.value = g.cols;
+  gridRowsEl.value = g.rows;
+}
+
+function readGridFromInputs() {
+  const g = editor.grid;
+  g.offX = Math.max(0, parseInt(gridOffXEl.value, 10) || 0);
+  g.offY = Math.max(0, parseInt(gridOffYEl.value, 10) || 0);
+  g.w = Math.max(1, parseInt(gridWEl.value, 10) || 1);
+  g.h = Math.max(1, parseInt(gridHEl.value, 10) || 1);
+  g.cols = Math.max(1, parseInt(gridColsEl.value, 10) || 1);
+  g.rows = Math.max(1, parseInt(gridRowsEl.value, 10) || 1);
+}
+
+function updateGridOverlay() {
+  if (editor.mode !== 'grid') return;
+  const img = document.getElementById('previewImg');
+  if (!img) return;
+  const rect = img.getBoundingClientRect();
+  const containerRect = img.parentElement.getBoundingClientRect();
+  const scaleX = rect.width / editor.previewNaturalWidth;
+  const scaleY = rect.height / editor.previewNaturalHeight;
+
+  let overlay = document.querySelector('.grid-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'grid-overlay';
+    img.parentElement.appendChild(overlay);
+  }
+  overlay.innerHTML = '';
+
+  const g = editor.grid;
+  const W = editor.previewNaturalWidth;
+  const H = editor.previewNaturalHeight;
+
+  for (let r = 0; r < g.rows; r++) {
+    for (let c = 0; c < g.cols; c++) {
+      const x = g.offX + c * g.w;
+      const y = g.offY + r * g.h;
+      if (x + g.w > W + 0.5 || y + g.h > H + 0.5) continue;
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.label = `${r + 1},${c + 1}`;
+      cell.style.left = (rect.left - containerRect.left + x * scaleX) + 'px';
+      cell.style.top = (rect.top - containerRect.top + y * scaleY) + 'px';
+      cell.style.width = (g.w * scaleX) + 'px';
+      cell.style.height = (g.h * scaleY) + 'px';
+      overlay.appendChild(cell);
+    }
+  }
+
+  const total = Math.max(0, Math.floor((W - g.offX) / g.w)) *
+                Math.max(0, Math.floor((H - g.offY) / g.h));
+  gridInfoEl.textContent = `${g.rows}×${g.cols} · ${total} Bilder · Zelle ${g.w}×${g.h}px`;
+}
+
+[gridOffXEl, gridOffYEl, gridWEl, gridHEl, gridColsEl, gridRowsEl].forEach(el => {
+  el.addEventListener('input', () => {
+    if (!editor.imageId || editor.mode !== 'grid') return;
+    readGridFromInputs();
+    updateGridOverlay();
+  });
+});
+
 /* --- Preview pipeline (debounced) --- */
 
 function schedulePreview() {
@@ -756,7 +1364,6 @@ async function buildPreview() {
   editorStatus.textContent = 'Berechne Vorschau …';
   editorStatus.className = 'status';
   try {
-    // Bitmap kopieren, da Worker sie transferiert
     const src = editor.baseBitmap;
     const clone = await createImageBitmap(src);
     const ops = editor.draftOps.map(op => ({ ...op }));
@@ -765,31 +1372,34 @@ async function buildPreview() {
     const blob = await bitmapToBlob(result, 'image/png');
     if (editor.previewURL) URL.revokeObjectURL(editor.previewURL);
     editor.previewURL = URL.createObjectURL(blob);
-    
-    // Preview mit Crop-Overlay aufbauen
+
     buildPreviewWithCropOverlay(blob, result.width, result.height);
-    
+
     editorPreviewInfo.textContent = `Ergebnis: ${result.width} × ${result.height} px`;
     editorDims.textContent = `${result.width} × ${result.height} px`;
     editorStatus.textContent = '';
-    
-    // Crop max anpassen
+
     cropXEl.max = Math.max(0, result.width - 1);
     cropYEl.max = Math.max(0, result.height - 1);
     cropWEl.max = result.width;
     cropHEl.max = result.height;
-    
-    // Crop selection auf das neue volle Bild zurücksetzen,
-    // da sich die Dimensionen durch die Ops geändert haben können.
+
     editor.cropSelection = { x: 0, y: 0, w: result.width, h: result.height };
-    clampCropSelection(); // synchronisiert auch die Input-Felder
-    
-    // Resize-Felder an neue Bildgröße anpassen (falls leer oder ungültig)
+    clampCropSelection();
+
     if (!resizeWEl.value || parseInt(resizeWEl.value, 10) > result.width) {
       resizeWEl.value = result.width;
     }
     if (!resizeHEl.value || parseInt(resizeHEl.value, 10) > result.height) {
       resizeHEl.value = result.height;
+    }
+
+    if (editor.mode === 'grid') {
+      const g = editor.grid;
+      if (g.w * g.cols > result.width || g.h * g.rows > result.height || g.w < 1) {
+        initGridFromPreview();
+      }
+      updateGridOverlay();
     }
   } catch (err) {
     console.error(err);
@@ -803,24 +1413,29 @@ async function buildPreview() {
 function buildPreviewWithCropOverlay(blob, naturalWidth, naturalHeight) {
   editor.previewNaturalWidth = naturalWidth;
   editor.previewNaturalHeight = naturalHeight;
-  
+
   editorPreview.innerHTML = '';
-  
+
   const container = document.createElement('div');
   container.className = 'crop-container';
   container.id = 'cropContainer';
-  
+
   const img = document.createElement('img');
   img.src = editor.previewURL;
   img.alt = 'Vorschau';
   img.id = 'previewImg';
   img.draggable = false;
-  
+
+  const initPct = editor.zoomFit ? computeFitPercent() : editor.zoomPercent;
+  const initScale = initPct / 100;
+  img.style.width = (naturalWidth * initScale) + 'px';
+  img.style.height = (naturalHeight * initScale) + 'px';
+
   const selection = document.createElement('div');
   selection.className = 'crop-selection';
   selection.id = 'cropSelection';
-  
-  // Handles erstellen
+  if (editor.mode === 'grid') selection.classList.add('hidden');
+
   const handles = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
   for (const h of handles) {
     const handle = document.createElement('div');
@@ -828,45 +1443,40 @@ function buildPreviewWithCropOverlay(blob, naturalWidth, naturalHeight) {
     handle.dataset.handle = h;
     selection.appendChild(handle);
   }
-  
+
   container.appendChild(img);
   container.appendChild(selection);
   editorPreview.appendChild(container);
-  
-  // Nach dem Laden die Anzeigegröße ermitteln und Selektion positionieren
-  const updateSelectionPosition = () => {
-    const rect = img.getBoundingClientRect();
-    editor.previewDisplayWidth = rect.width;
-    editor.previewDisplayHeight = rect.height;
-    updateCropSelectionUI();
+
+  const onImgReady = () => {
+    applyZoom();
   };
-  
+
   if (img.complete) {
-    updateSelectionPosition();
+    requestAnimationFrame(onImgReady);
   } else {
-    img.onload = updateSelectionPosition;
+    img.onload = () => requestAnimationFrame(onImgReady);
   }
-  
-  // Event listeners für Crop-Interaktion
+
   setupCropInteraction(container, selection, img);
 }
 
 /* --- Crop Selection Logic --- */
 
 function updateCropSelectionUI() {
+  if (editor.mode === 'grid') return;
   const selectionEl = document.getElementById('cropSelection');
   const img = document.getElementById('previewImg');
   if (!selectionEl || !img) return;
-  
+
   const rect = img.getBoundingClientRect();
   const containerRect = img.parentElement.getBoundingClientRect();
-  
-  // Skalierung von Bildpixel zu Anzeigepixel
+
   const scaleX = rect.width / editor.previewNaturalWidth;
   const scaleY = rect.height / editor.previewNaturalHeight;
-  
+
   const sel = editor.cropSelection;
-  
+
   selectionEl.style.left = (rect.left - containerRect.left + sel.x * scaleX) + 'px';
   selectionEl.style.top = (rect.top - containerRect.top + sel.y * scaleY) + 'px';
   selectionEl.style.width = (sel.w * scaleX) + 'px';
@@ -877,12 +1487,12 @@ function clampCropSelection() {
   const sel = editor.cropSelection;
   const maxW = editor.previewNaturalWidth;
   const maxH = editor.previewNaturalHeight;
-  
+
   sel.w = Math.max(1, Math.min(sel.w, maxW));
   sel.h = Math.max(1, Math.min(sel.h, maxH));
   sel.x = Math.max(0, Math.min(sel.x, maxW - sel.w));
   sel.y = Math.max(0, Math.min(sel.y, maxH - sel.h));
-  
+
   updateCropSelectionUI();
   syncCropInputsFromSelection();
 }
@@ -900,14 +1510,14 @@ function syncSelectionFromCropInputs() {
   const y = parseFloat(cropYEl.value) || 0;
   const w = parseFloat(cropWEl.value) || 1;
   const h = parseFloat(cropHEl.value) || 1;
-  
+
   editor.cropSelection = {
     x: Math.max(0, Math.min(x, editor.previewNaturalWidth - 1)),
     y: Math.max(0, Math.min(y, editor.previewNaturalHeight - 1)),
     w: Math.max(1, Math.min(w, editor.previewNaturalWidth)),
     h: Math.max(1, Math.min(h, editor.previewNaturalHeight)),
   };
-  
+
   clampCropSelection();
   updateCropSelectionUI();
 }
@@ -926,22 +1536,24 @@ function setupCropInteraction(container, selectionEl, img) {
       y: (e.clientY - rect.top) * scaleY,
     };
   };
-  
+
   const startDrag = (e, mode, handle) => {
+    if (editor.mode === 'grid') return;
     e.preventDefault();
     e.stopPropagation();
     const coords = getImageCoords(e);
     cropDragState = {
-      mode, // 'move' oder 'resize'
-      handle, // welcher Handle ('nw', 'se', etc.) oder null für move
+      mode,
+      handle,
       startX: coords.x,
       startY: coords.y,
       startSel: { ...editor.cropSelection },
     };
     container.style.cursor = mode === 'move' ? 'grabbing' : 'crosshair';
   };
-  
+
   const onMouseDown = (e) => {
+    if (editor.mode === 'grid') return;
     const target = e.target;
     if (target.classList.contains('crop-handle')) {
       startDrag(e, 'resize', target.dataset.handle);
@@ -949,18 +1561,18 @@ function setupCropInteraction(container, selectionEl, img) {
       startDrag(e, 'move', null);
     }
   };
-  
+
   const onMouseMove = (e) => {
-    if (!cropDragState) return;
+    if (!cropDragState || editor.mode === 'grid') return;
     e.preventDefault();
-    
+
     const coords = getImageCoords(e);
     const dx = coords.x - cropDragState.startX;
     const dy = coords.y - cropDragState.startY;
     const start = cropDragState.startSel;
-    
+
     let newSel = { ...editor.cropSelection };
-    
+
     if (cropDragState.mode === 'move') {
       newSel.x = start.x + dx;
       newSel.y = start.y + dy;
@@ -970,13 +1582,12 @@ function setupCropInteraction(container, selectionEl, img) {
       let top = start.y;
       let right = start.x + start.w;
       let bottom = start.y + start.h;
-      
+
       if (h.includes('w')) left = start.x + dx;
       if (h.includes('e')) right = start.x + start.w + dx;
       if (h.includes('n')) top = start.y + dy;
       if (h.includes('s')) bottom = start.y + start.h + dy;
-      
-      // Mindestgröße
+
       const minSize = 10;
       if (right - left < minSize) {
         if (h.includes('w')) left = right - minSize;
@@ -986,74 +1597,76 @@ function setupCropInteraction(container, selectionEl, img) {
         if (h.includes('n')) top = bottom - minSize;
         else bottom = top + minSize;
       }
-      
+
       newSel.x = left;
       newSel.y = top;
       newSel.w = right - left;
       newSel.h = bottom - top;
     }
-    
-    // Clamping auf Bildgrenzen
+
     const maxW = editor.previewNaturalWidth;
     const maxH = editor.previewNaturalHeight;
-    
+
     if (newSel.x < 0) { newSel.w += newSel.x; newSel.x = 0; }
     if (newSel.y < 0) { newSel.h += newSel.y; newSel.y = 0; }
     if (newSel.x + newSel.w > maxW) newSel.w = maxW - newSel.x;
     if (newSel.y + newSel.h > maxH) newSel.h = maxH - newSel.y;
-    
+
     newSel.w = Math.max(1, newSel.w);
     newSel.h = Math.max(1, newSel.h);
-    
+
     editor.cropSelection = newSel;
     updateCropSelectionUI();
     syncCropInputsFromSelection();
   };
-  
+
   const onMouseUp = () => {
     if (cropDragState) {
       cropDragState = null;
       container.style.cursor = '';
     }
   };
-  
+
   container.addEventListener('mousedown', onMouseDown);
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
-  
-  // Touch support
+
   container.addEventListener('touchstart', (e) => {
+    if (editor.mode === 'grid') return;
     if (e.touches.length === 1) {
       const touch = e.touches[0];
       const fakeEvent = { clientX: touch.clientX, clientY: touch.clientY, target: e.target, preventDefault: () => e.preventDefault(), stopPropagation: () => e.stopPropagation() };
       onMouseDown(fakeEvent);
     }
   }, { passive: false });
-  
+
   window.addEventListener('touchmove', (e) => {
-    if (cropDragState && e.touches.length === 1) {
+    if (cropDragState && e.touches.length === 1 && editor.mode !== 'grid') {
       const touch = e.touches[0];
       const fakeEvent = { clientX: touch.clientX, clientY: touch.clientY, preventDefault: () => e.preventDefault() };
       onMouseMove(fakeEvent);
     }
   }, { passive: false });
-  
+
   window.addEventListener('touchend', onMouseUp);
 }
 
 /* --- Input field sync --- */
 
-// Inputs ändern -> Selection aktualisieren
 [cropXEl, cropYEl, cropWEl, cropHEl].forEach(el => {
   el.addEventListener('input', () => {
-    if (!editor.imageId) return;
+    if (!editor.imageId || editor.mode === 'grid') return;
     syncSelectionFromCropInputs();
   });
 });
 
-// Auf window resize reagieren (Anzeigegröße ändert sich)
 window.addEventListener('resize', () => {
-  if (editor.imageId && editor.previewNaturalWidth > 0) {
+  if (!editor.imageId) return;
+  if (editor.zoomFit) {
+    applyZoom();
+  } else if (editor.mode === 'grid') {
+    updateGridOverlay();
+  } else if (editor.previewNaturalWidth > 0) {
     updateCropSelectionUI();
   }
 });
@@ -1061,19 +1674,18 @@ window.addEventListener('resize', () => {
 /* --- Op-Additionen --- */
 
 document.getElementById('btnAddCrop').onclick = () => {
-  // Aktuelle Selection verwenden
   const sel = editor.cropSelection;
   const x = Math.round(sel.x);
   const y = Math.round(sel.y);
   const w = Math.round(sel.w);
   const h = Math.round(sel.h);
-  
+
   if (w <= 0 || h <= 0) {
     editorStatus.textContent = 'Ungültige Crop-Werte.';
     editorStatus.className = 'status error';
     return;
   }
-  
+
   editor.draftOps.push({ type: 'crop', x, y, w, h });
   renderSteps();
   updateEditorButtons();
@@ -1103,7 +1715,6 @@ document.getElementById('btnAddColorToAlpha').onclick = () => {
   schedulePreview();
 };
 
-// Resize: keepRatio-Logik
 resizeWEl.oninput = () => {
   if (!resizeKeepRatio.checked) return;
   const img = images.find(x => x.id === editor.imageId);
@@ -1148,9 +1759,48 @@ btnEditorRemoveLast.onclick = () => {
 
 document.getElementById('btnEditorCancel').onclick = () => closeEditor();
 
+/* --- Titel klickbar → Eingabefeld ersetzen --- */
+
+function endTitleEdit() {
+  if (editorNameEl.classList.contains('hidden')) return;
+  editorNameEl.classList.add('hidden');
+  editorTitle.classList.remove('hidden');
+  const val = editorNameEl.value.trim();
+  editorTitle.textContent = val || 'Bearbeiten';
+}
+
+editorTitle.addEventListener('click', () => {
+  if (!editor.imageId) return;
+  if (!editorNameEl.classList.contains('hidden')) return;
+  editorTitle.classList.add('hidden');
+  editorNameEl.classList.remove('hidden');
+  editorNameEl.focus();
+  editorNameEl.select();
+});
+
+editorNameEl.addEventListener('blur', () => {
+  endTitleEdit();
+});
+
+editorNameEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    endTitleEdit();
+    if (!btnEditorApply.disabled) btnEditorApply.click();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    const prev = editorTitle.textContent;
+    editorNameEl.value = prev === 'Bearbeiten' ? '' : prev;
+    editorNameEl.blur();
+  }
+});
+
 btnEditorApply.onclick = async () => {
   const img = images.find(x => x.id === editor.imageId);
   if (!img) return;
+
+  const newName = editorNameEl.value.trim();
+  if (newName) img.name = newName;
 
   btnEditorApply.disabled = true;
   editorStatus.textContent = 'Aktualisiere Vorschau …';
@@ -1158,11 +1808,7 @@ btnEditorApply.onclick = async () => {
 
   try {
     img.committedOps = editor.draftOps.map(op => ({ ...op }));
-
-    // WICHTIG: awaiten, damit das neue Thumb fertig ist,
-    // bevor die Galerie gerendert wird
     await refreshThumbnail(img);
-
     closeEditor();
     renderGallery();
     updateApplyAllAvailability();
@@ -1172,6 +1818,89 @@ btnEditorApply.onclick = async () => {
     editorStatus.className = 'status error';
   } finally {
     btnEditorApply.disabled = false;
+  }
+};
+
+/* --- Zerlegen-Button --- */
+
+btnGridSplit.onclick = async () => {
+  if (!editor.imageId) return;
+  readGridFromInputs();
+  const img = images.find(x => x.id === editor.imageId);
+  if (!img) return;
+
+  const g = editor.grid;
+  const W = editor.previewNaturalWidth;
+  const H = editor.previewNaturalHeight;
+
+  if (g.offX + g.w * g.cols > W || g.offY + g.h * g.rows > H) {
+    editorStatus.textContent = 'Gitter passt nicht in das Bild.';
+    editorStatus.className = 'status error';
+    return;
+  }
+
+  btnGridSplit.disabled = true;
+  editorStatus.textContent = 'Zerlege Bild …';
+  editorStatus.className = 'status';
+
+  try {
+    const clone = await createImageBitmap(img.sourceBitmap);
+    const edited = await runOps(clone, img.committedOps.map(op => ({ ...op })));
+
+    const crops = [];
+    for (let r = 0; r < g.rows; r++) {
+      for (let c = 0; c < g.cols; c++) {
+        crops.push({
+          x: g.offX + c * g.w,
+          y: g.offY + r * g.h,
+          w: g.w,
+          h: g.h,
+          r, c,
+        });
+      }
+    }
+
+    const newImages = [];
+    for (const crop of crops) {
+      const cropped = await runOps(
+        await createImageBitmap(edited),
+        [{ type: 'crop', x: crop.x, y: crop.y, w: crop.w, h: crop.h }]
+      );
+      const thumb = await makeThumb(cropped, 256);
+      const thumbBlob = await bitmapToBlob(thumb, 'image/webp', 0.8);
+      thumb.close?.();
+
+      const newImg = {
+        id: uuid(),
+        name: `${img.name}_r${crop.r + 1}c${crop.c + 1}`,
+        sourceBlob: null,
+        sourceBitmap: cropped,
+        committedOps: [],
+        draftOps: null,
+        thumbnailURL: URL.createObjectURL(thumbBlob),
+      };
+      newImages.push(newImg);
+    }
+
+    edited.close?.();
+
+    const idx = images.findIndex(x => x.id === img.id);
+    if (idx >= 0) {
+      URL.revokeObjectURL(img.thumbnailURL);
+      img.sourceBitmap.close?.();
+      images.splice(idx, 1);
+    }
+    images.splice(idx >= 0 ? idx : images.length, 0, ...newImages);
+
+    closeEditor();
+    renderGallery();
+    updateApplyAllAvailability();
+  } catch (err) {
+    console.error(err);
+    editorStatus.textContent = 'Fehler beim Zerlegen: ' + err.message;
+    editorStatus.className = 'status error';
+  } finally {
+    btnGridSplit.disabled = false;
   }
 };
 
@@ -1201,7 +1930,6 @@ const btnApplyAll = document.getElementById('btnApplyAll');
 const applyAllHint = document.getElementById('applyAllHint');
 
 function updateApplyAllAvailability() {
-  // Verfügbar, wenn es ein Bild gibt, dessen committedOps nicht leer sind
   const has = images.some(img => img.committedOps.length > 0);
   btnApplyAll.disabled = !has;
   applyAllHint.textContent = has
@@ -1210,7 +1938,6 @@ function updateApplyAllAvailability() {
 }
 
 btnApplyAll.onclick = async () => {
-  // Quelle: das Bild mit den meisten committedOps (oder das erste mit welchen)
   const source = images
     .filter(img => img.committedOps.length > 0)
     .sort((a, b) => b.committedOps.length - a.committedOps.length)[0];
@@ -1240,14 +1967,30 @@ const btnAddResize = document.getElementById('btnAddResize');
 const resizeListEl = document.getElementById('resizeList');
 const exportStatus = document.getElementById('exportStatus');
 
+const svgAlphaField = document.getElementById('svgAlphaField');
+const svgAlpha = document.getElementById('svgAlpha');
+const svgAlphaVal = document.getElementById('svgAlphaVal');
+const resizeField = document.getElementById('resizeField');
+
 formatEl.onchange = () => {
   exportSettings.format = formatEl.value;
-  qualityField.classList.toggle('hidden', exportSettings.format === 'png');
+  const f = exportSettings.format;
+  const isSvg = f === 'svg';
+  qualityField.classList.toggle('hidden', f === 'png' || isSvg);
+  svgAlphaField.classList.toggle('hidden', !isSvg);
+  resizeField.classList.toggle('hidden', isSvg);
 };
+
 qualityEl.oninput = () => {
   exportSettings.quality = parseFloat(qualityEl.value);
   qualityValEl.textContent = exportSettings.quality.toFixed(2);
 };
+
+svgAlpha.oninput = () => {
+  exportSettings.svgAlphaThreshold = parseInt(svgAlpha.value, 10);
+  svgAlphaVal.textContent = svgAlpha.value;
+};
+
 suffixEl.oninput = () => {
   exportSettings.suffix = suffixEl.value;
 };
@@ -1292,28 +2035,37 @@ btnExport.onclick = async () => {
     const zip = new JSZip();
     const format = exportSettings.format;
     const quality = exportSettings.quality;
-    const suffix = exportSettings.suffix; // unverändert
+    const suffix = exportSettings.suffix;
     const mime = mimeFor(format);
     const ext = extFor(format);
-    const resizeList = exportSettings.resizeList.slice();
+    const resizeList = format === 'svg' ? [] : exportSettings.resizeList.slice();
     const totalJobs = images.length * (resizeList.length || 1);
     let done = 0;
 
     for (const img of images) {
-      // Basis-Bitmap durch committedOps
       const clone = await createImageBitmap(img.sourceBitmap);
       const edited = await runOps(clone, img.committedOps.map(op => ({ ...op })));
 
-      if (resizeList.length === 0) {
-        // Originalgröße exportieren
+      if (format === 'svg') {
+        const svgString = await runSvgTrace(edited, {
+          alphaThreshold: exportSettings.svgAlphaThreshold,
+          colorThreshold: 16,
+          minArea: 8,
+          simplifyTolerance: 0.75,
+        });
+        zip.file(`${img.name}${suffix}.svg`, svgString);
+        done++;
+        exportStatus.textContent = `Exportiere … ${done}/${totalJobs}`;
+        await new Promise(r => setTimeout(r, 0));
+      } else if (resizeList.length === 0) {
         const blob = await bitmapToBlob(edited, mime, quality);
         const fname = `${img.name}${suffix}.${ext}`;
         zip.file(fname, blob);
         done++;
         exportStatus.textContent = `Exportiere … ${done}/${totalJobs}`;
+        edited.close?.();
       } else {
         for (const targetW of resizeList) {
-          // Höhe proportional
           const ratio = edited.height / edited.width;
           const targetH = Math.max(1, Math.round(targetW * ratio));
           const resized = await runOps(
@@ -1327,8 +2079,8 @@ btnExport.onclick = async () => {
           done++;
           exportStatus.textContent = `Exportiere … ${done}/${totalJobs}`;
         }
+        edited.close?.();
       }
-      edited.close?.();
     }
 
     exportStatus.textContent = 'Erzeuge ZIP …';
@@ -1352,11 +2104,11 @@ btnExport.onclick = async () => {
 };
 
 /* ============================================================
- *  File Input / Drag & Drop
+ *  File Input / Vollbild-Drag & Drop
  * ============================================================ */
 
 const fileInput = document.getElementById('fileInput');
-const dropzone = document.getElementById('dropzone');
+const dropOverlay = document.getElementById('dropOverlay');
 
 document.getElementById('btnAdd').onclick = () => fileInput.click();
 fileInput.onchange = () => {
@@ -1366,26 +2118,117 @@ fileInput.onchange = () => {
   }
 };
 
-['dragenter', 'dragover'].forEach(ev =>
-  dropzone.addEventListener(ev, e => {
-    e.preventDefault();
-    dropzone.classList.add('drag');
-  })
-);
-['dragleave', 'drop'].forEach(ev =>
-  dropzone.addEventListener(ev, e => {
-    e.preventDefault();
-    dropzone.classList.remove('drag');
-  })
-);
-dropzone.addEventListener('drop', e => {
+// Zähler, weil dragenter/dragleave für jedes Kind-Element feuern.
+let dragDepth = 0;
+
+function isFileDrag(e) {
+  const types = e.dataTransfer?.types;
+  if (!types) return false;
+  for (const t of types) if (t === 'Files') return true;
+  return false;
+}
+
+function showDropOverlay() { dropOverlay.classList.add('active'); }
+function hideDropOverlay() {
+  dragDepth = 0;
+  dropOverlay.classList.remove('active');
+}
+
+window.addEventListener('dragenter', (e) => {
+  if (!isFileDrag(e)) return;
+  e.preventDefault();
+  dragDepth++;
+  showDropOverlay();
+});
+
+window.addEventListener('dragover', (e) => {
+  if (!isFileDrag(e)) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+});
+
+window.addEventListener('dragleave', (e) => {
+  if (!isFileDrag(e)) return;
+  e.preventDefault();
+  dragDepth--;
+  // relatedTarget === null bedeutet: Drag hat das Fenster verlassen.
+  if (dragDepth <= 0 || e.relatedTarget === null) hideDropOverlay();
+});
+
+window.addEventListener('drop', (e) => {
+  if (!isFileDrag(e)) return;
+  e.preventDefault();
+  hideDropOverlay();
   if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
 });
-dropzone.addEventListener('click', () => fileInput.click());
 
-// Verhindere, dass Datei-Drop auf der Seite navigiert
-window.addEventListener('dragover', e => e.preventDefault());
-window.addEventListener('drop', e => e.preventDefault());
+/* ============================================================
+ *  Hilfe-Dialog
+ * ============================================================ */
+
+const helpModal = document.getElementById('helpModal');
+const btnHelp = document.getElementById('btnHelp');
+const btnHelpClose = document.getElementById('btnHelpClose');
+
+function openHelp() {
+  helpModal.classList.add('open');
+  btnHelp.setAttribute('aria-expanded', 'true');
+}
+function closeHelp() {
+  helpModal.classList.remove('open');
+  btnHelp.setAttribute('aria-expanded', 'false');
+}
+
+btnHelp.addEventListener('click', () => {
+  if (helpModal.classList.contains('open')) closeHelp();
+  else openHelp();
+});
+btnHelpClose.addEventListener('click', closeHelp);
+
+// Klick auf den Hintergrund (außerhalb des Dialogs) schließt ihn.
+helpModal.addEventListener('click', (e) => {
+  if (e.target === helpModal) closeHelp();
+});
+
+/* ============================================================
+ *  Responsive Export-Seitenmenü
+ * ============================================================ */
+
+const btnMenu        = document.getElementById('btnMenu');
+const btnCloseMenu   = document.getElementById('btnCloseMenu');
+const asideBackdrop  = document.getElementById('asideBackdrop');
+const exportPanel    = document.getElementById('exportPanel');
+
+function openExportPanel() {
+  exportPanel.classList.add('open');
+  asideBackdrop.classList.add('open');
+  document.body.classList.add('aside-open');
+  btnMenu.setAttribute('aria-expanded', 'true');
+}
+function closeExportPanel() {
+  exportPanel.classList.remove('open');
+  asideBackdrop.classList.remove('open');
+  document.body.classList.remove('aside-open');
+  btnMenu.setAttribute('aria-expanded', 'false');
+}
+function toggleExportPanel() {
+  if (exportPanel.classList.contains('open')) closeExportPanel();
+  else openExportPanel();
+}
+
+btnMenu.addEventListener('click', toggleExportPanel);
+btnCloseMenu.addEventListener('click', closeExportPanel);
+asideBackdrop.addEventListener('click', closeExportPanel);
+
+// Escape schließt das oberste offene Overlay.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (helpModal.classList.contains('open')) {
+    closeHelp();
+  } else if (exportPanel.classList.contains('open')) {
+    closeExportPanel();
+  }
+});
 
 /* ============================================================
  *  Init
@@ -1395,12 +2238,14 @@ renderResizeList();
 renderGallery();
 updateApplyAllAvailability();
 
+svgAlphaVal.textContent = svgAlpha.value;
+formatEl.dispatchEvent(new Event('change'));
+
 /* ============================================================
  *  Paste aus der Zwischenablage (Strg+V)
  * ============================================================ */
 
 window.addEventListener('paste', async (e) => {
-  // Nur eingreifen, wenn nicht gerade in ein Eingabefeld eingefügt wird
   const active = document.activeElement;
   const isEditable =
     active &&
@@ -1423,15 +2268,16 @@ window.addEventListener('paste', async (e) => {
 
   e.preventDefault();
 
-  // Optional: sinnvollen Dateinamen vergeben, da Zwischenablage-Bilder
-  // oft "image.png" o. ä. heißen
   const stamp = new Date()
     .toISOString()
-    .slice(0, 19)
-    .replace(/[:T]/g, '-');
+    .slice(0, 23)
+    .replace(/[:T]/g, '-')
+    .replace('.', '-');
   const namedFiles = files.map((f, i) => {
     const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
-    const base = f.name && f.name !== 'image.png' ? f.name : `eingefuegt-${stamp}${files.length > 1 ? '-' + (i + 1) : ''}.${ext}`;
+    const base = f.name && f.name !== 'image.png'
+      ? f.name
+      : `eingefuegt-${stamp}${files.length > 1 ? '-' + (i + 1) : ''}.${ext}`;
     return new File([f], base, { type: f.type });
   });
 
