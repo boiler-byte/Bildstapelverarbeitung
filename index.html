@@ -137,16 +137,20 @@
     background: #1f1f23;
     border: 1px solid var(--border);
     border-radius: 6px;
-    overflow: hidden;
+    overflow: visible;             /* Dropdown darf über Karte hinausragen */
+    position: relative;
+    z-index: 1;
     display: flex; flex-direction: column;
     transition: border-color 120ms;
   }
+  .card.menu-open { z-index: 10; }
   .card.active { border-color: var(--accent); }
   .card .thumb {
     aspect-ratio: 1 / 1;
     background: #151517 repeating-conic-gradient(#1c1c1f 0% 25%, #151517 0% 50%) 50% / 16px 16px;
     display: flex; align-items: center; justify-content: center;
     overflow: hidden;
+    border-radius: 5px 5px 0 0;    /* oben an Kartenrundung anpassen */
   }
   .card .thumb img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
   .card .meta {
@@ -164,7 +168,7 @@
   }
   .card .actions button { flex: 1; font-size: 12px; padding: 4px 6px; }
 
-  /* Icon-Buttons (Kopieren / Entfernen) */
+  /* Icon-Buttons (Menü) */
   .card .actions button.icon {
     flex: none;
     width: 30px;
@@ -174,6 +178,46 @@
     justify-content: center;
   }
   .card .actions button.icon svg { display: block; }
+
+  /* Menü-Wrapper + Dropdown */
+  .card .actions .menu-wrapper {
+    flex: none;
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .dropdown {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 4px);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    min-width: 200px;
+    display: none;
+    flex-direction: column;
+    z-index: 20;
+    box-shadow: 0 4px 12px rgba(0,0,0,.5);
+    padding: 4px;
+  }
+  .dropdown.open { display: flex; }
+  .dropdown button {
+    text-align: left;
+    background: transparent;
+    border: none;
+    padding: 7px 10px;
+    border-radius: 3px;
+    font-size: 12px;
+    cursor: pointer;
+    width: 100%;
+    color: var(--text);
+    flex: none;
+  }
+  .dropdown button:hover:not(:disabled) {
+    background: rgba(255,255,255,.08);
+    border-color: transparent;
+  }
+  .dropdown button.danger { color: #ff8080; }
 
   .empty {
     color: var(--muted); text-align: center; padding: 40px 0;
@@ -766,8 +810,7 @@
         <li>Zum Zuschneiden: im Bild ein Rechteck aufziehen oder Werte eintippen, dann <strong>Zuschneiden anwenden</strong>.</li>
         <li>Der Dateiname oben lässt sich anklicken und ändern.</li>
         <li><strong>Übernehmen</strong> speichert die Schritte, <strong>Abbrechen</strong> verwirft sie.</li>
-        <li>Das <strong>Kopieren</strong>-Icon legt eine Kopie mit dem Namenszusatz <em>(copy)</em> an — bereits hinterlegte Schritte werden dabei fest ins Bild eingerechnet.</li>
-        <li>Das <strong>Papierkorb</strong>-Icon entfernt das Bild aus dem Stapel.</li>
+        <li>Das <strong>Menü</strong>-Symbol (⋮) bietet: <em>Kopie erstellen</em>, <em>Herunterladen</em>, <em>In Zwischenablage kopieren</em>, <em>Entfernen</em>.</li>
       </ul>
     </div>
 
@@ -1003,20 +1046,10 @@ const emptyHintEl = document.getElementById('emptyHint');
 const countInfoEl = document.getElementById('countInfo');
 const btnExport = document.getElementById('btnExport');
 
-/* Icons (SVG, erben die Textfarbe via currentColor) */
-const ICON_COPY =
-  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
-  'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<rect x="9" y="9" width="13" height="13" rx="2"/>' +
-  '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
-
-const ICON_TRASH =
-  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
-  'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<polyline points="3 6 5 6 21 6"/>' +
-  '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
-  '<path d="M10 11v6"/><path d="M14 11v6"/>' +
-  '<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+/* Menü-Icon (drei Punkte) */
+const ICON_MENU =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">' +
+  '<circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
 
 function renderGallery() {
   countInfoEl.textContent = images.length ? `${images.length} Bild${images.length === 1 ? '' : 'er'}` : '';
@@ -1057,25 +1090,56 @@ function renderGallery() {
     btnEdit.textContent = 'Bearbeiten';
     btnEdit.onclick = () => openEditor(img.id);
 
-    // Kopieren: Icon statt Label
-    const btnCopy = document.createElement('button');
-    btnCopy.className = 'icon';
-    btnCopy.innerHTML = ICON_COPY;
-    btnCopy.title = 'Kopie erstellen';
-    btnCopy.setAttribute('aria-label', 'Kopie erstellen');
-    btnCopy.onclick = () => duplicateImage(img.id);
+    // --- Menü-Wrapper ---
+    const menuWrapper = document.createElement('div');
+    menuWrapper.className = 'menu-wrapper';
 
-    // Entfernen: Icon statt Label
-    const btnRemove = document.createElement('button');
-    btnRemove.className = 'icon danger';
-    btnRemove.innerHTML = ICON_TRASH;
-    btnRemove.title = 'Entfernen';
-    btnRemove.setAttribute('aria-label', 'Entfernen');
-    btnRemove.onclick = () => removeImage(img.id);
+    const btnMenu = document.createElement('button');
+    btnMenu.className = 'icon menu-btn';
+    btnMenu.innerHTML = ICON_MENU;
+    btnMenu.title = 'Weitere Aktionen';
+    btnMenu.setAttribute('aria-label', 'Weitere Aktionen');
+    btnMenu.setAttribute('aria-haspopup', 'true');
+    btnMenu.setAttribute('aria-expanded', 'false');
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'dropdown';
+    dropdown.setAttribute('role', 'menu');
+
+    const mkItem = (label, handler, danger) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.setAttribute('role', 'menuitem');
+      if (danger) b.classList.add('danger');
+      b.onclick = async (e) => {
+        e.stopPropagation();
+        closeAllDropdowns();
+        await handler();
+      };
+      return b;
+    };
+
+    dropdown.appendChild(mkItem('Kopie erstellen', () => duplicateImage(img.id)));
+    dropdown.appendChild(mkItem('Herunterladen', () => downloadImage(img.id)));
+    dropdown.appendChild(mkItem('In Zwischenablage kopieren', () => copyImageToClipboard(img.id)));
+    dropdown.appendChild(mkItem('Entfernen', () => removeImage(img.id), true));
+
+    btnMenu.onclick = (e) => {
+      e.stopPropagation();
+      const wasOpen = dropdown.classList.contains('open');
+      closeAllDropdowns();
+      if (!wasOpen) {
+        dropdown.classList.add('open');
+        btnMenu.setAttribute('aria-expanded', 'true');
+        card.classList.add('menu-open');
+      }
+    };
+
+    menuWrapper.appendChild(btnMenu);
+    menuWrapper.appendChild(dropdown);
 
     actions.appendChild(btnEdit);
-    actions.appendChild(btnCopy);
-    actions.appendChild(btnRemove);
+    actions.appendChild(menuWrapper);
 
     card.appendChild(thumb);
     card.appendChild(meta);
@@ -1134,6 +1198,116 @@ async function duplicateImage(id) {
     alert('Kopieren fehlgeschlagen: ' + err.message);
   }
 }
+
+/* ============================================================
+ *  Dropdown-Hilfsfunktionen + Download / Clipboard
+ * ============================================================ */
+
+function closeAllDropdowns() {
+  document.querySelectorAll('.dropdown.open').forEach(d => {
+    d.classList.remove('open');
+    const card = d.closest('.card');
+    if (card) card.classList.remove('menu-open');
+    const btn = d.parentElement?.querySelector('.menu-btn');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  });
+}
+
+/* Führt die committed Ops auf einer Kopie des Original-Bitmaps aus. */
+async function renderImageWithOps(img) {
+  const clone = await createImageBitmap(img.sourceBitmap);
+  return await runOps(clone, img.committedOps.map(op => ({ ...op })));
+}
+
+/* Wählt das passende Ausgangsformat für den Download.
+   PNG wird erzwungen, sobald eine Operation Transparenz erzeugt. */
+function pickMimeFor(img) {
+  const needsAlpha = img.committedOps.some(op =>
+    op.type === 'colorToAlpha' || op.type === 'removeColor'
+  );
+  if (needsAlpha) return 'image/png';
+  if (img.sourceBlob && img.sourceBlob.type) {
+    const t = img.sourceBlob.type;
+    if (t === 'image/png' || t === 'image/jpeg' || t === 'image/webp') return t;
+  }
+  return 'image/png';
+}
+
+async function downloadImage(id) {
+  const img = images.find(x => x.id === id);
+  if (!img) return;
+  try {
+    const result = await renderImageWithOps(img);
+    const mime = pickMimeFor(img);
+    const ext = mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1];
+    const blob = await bitmapToBlob(result, mime, 0.92);
+    result.close?.();
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${img.name}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+    showToast(`Heruntergeladen: ${img.name}.${ext}`);
+  } catch (err) {
+    console.error(err);
+    alert('Herunterladen fehlgeschlagen: ' + err.message);
+  }
+}
+
+async function copyImageToClipboard(id) {
+  const img = images.find(x => x.id === id);
+  if (!img) return;
+
+  if (!navigator.clipboard || !window.ClipboardItem) {
+    alert('Zwischenablage-API nicht verfügbar. Bitte einen modernen Browser und HTTPS verwenden.');
+    return;
+  }
+
+  try {
+    // Blob als Promise übergeben → User-Activation bleibt erhalten
+    const blobPromise = (async () => {
+      const result = await renderImageWithOps(img);
+      const blob = await bitmapToBlob(result, 'image/png');
+      result.close?.();
+      return blob;
+    })();
+
+    await navigator.clipboard.write([
+      new ClipboardItem({ 'image/png': blobPromise })
+    ]);
+
+    showToast('Bild in Zwischenablage kopiert');
+  } catch (err) {
+    console.error(err);
+    alert('Kopieren in Zwischenablage fehlgeschlagen: ' + err.message);
+  }
+}
+
+function showToast(msg) {
+  const toast = document.createElement('div');
+  toast.textContent = msg;
+  toast.style.cssText = [
+    'position:fixed', 'bottom:24px', 'left:50%', 'transform:translateX(-50%)',
+    'background:#2a2a30', 'color:#e8e8ea', 'padding:8px 16px',
+    'border-radius:4px', 'border:1px solid #35353a', 'z-index:200',
+    'font-size:13px', 'box-shadow:0 4px 12px rgba(0,0,0,.5)',
+    'opacity:0', 'transition:opacity 200ms', 'pointer-events:none',
+  ].join(';') + ';';
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => { toast.style.opacity = '1'; });
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 250);
+  }, 1800);
+}
+
+// Klick außerhalb schließt das Dropdown
+document.addEventListener('click', () => closeAllDropdowns());
 
 /* ============================================================
  *  Editor
@@ -2339,7 +2513,9 @@ asideBackdrop.addEventListener('click', closeExportPanel);
 // Escape schließt das oberste offene Overlay.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (helpModal.classList.contains('open')) {
+  if (document.querySelector('.dropdown.open')) {
+    closeAllDropdowns();
+  } else if (helpModal.classList.contains('open')) {
     closeHelp();
   } else if (exportPanel.classList.contains('open')) {
     closeExportPanel();
