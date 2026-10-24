@@ -164,6 +164,17 @@
   }
   .card .actions button { flex: 1; font-size: 12px; padding: 4px 6px; }
 
+  /* Icon-Buttons (Kopieren / Entfernen) */
+  .card .actions button.icon {
+    flex: none;
+    width: 30px;
+    padding: 4px 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .card .actions button.icon svg { display: block; }
+
   .empty {
     color: var(--muted); text-align: center; padding: 40px 0;
   }
@@ -708,7 +719,15 @@
               <div><label>Spalten</label><input id="gridCols" type="number" min="1" step="1" value="1" /></div>
               <div><label>Zeilen</label><input id="gridRows" type="number" min="1" step="1" value="1" /></div>
             </div>
+            <!-- Fit-Button -->
+            <div class="row" style="margin-top:8px;">
+              <button id="btnGridFit" style="flex:1;"
+                      title="Zellgröße so berechnen, dass das Raster das Bild (abzüglich Offset) ausfüllt">
+                Auf Bild einpassen
+              </button>
+            </div>
             <div class="hint" id="gridInfo"></div>
+            
           </div>
         </div>
       </div>
@@ -747,6 +766,8 @@
         <li>Zum Zuschneiden: im Bild ein Rechteck aufziehen oder Werte eintippen, dann <strong>Zuschneiden anwenden</strong>.</li>
         <li>Der Dateiname oben lässt sich anklicken und ändern.</li>
         <li><strong>Übernehmen</strong> speichert die Schritte, <strong>Abbrechen</strong> verwirft sie.</li>
+        <li>Das <strong>Kopieren</strong>-Icon legt eine Kopie mit dem Namenszusatz <em>(copy)</em> an — bereits hinterlegte Schritte werden dabei fest ins Bild eingerechnet.</li>
+        <li>Das <strong>Papierkorb</strong>-Icon entfernt das Bild aus dem Stapel.</li>
       </ul>
     </div>
 
@@ -982,6 +1003,21 @@ const emptyHintEl = document.getElementById('emptyHint');
 const countInfoEl = document.getElementById('countInfo');
 const btnExport = document.getElementById('btnExport');
 
+/* Icons (SVG, erben die Textfarbe via currentColor) */
+const ICON_COPY =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
+  'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<rect x="9" y="9" width="13" height="13" rx="2"/>' +
+  '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+
+const ICON_TRASH =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
+  'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<polyline points="3 6 5 6 21 6"/>' +
+  '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
+  '<path d="M10 11v6"/><path d="M14 11v6"/>' +
+  '<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+
 function renderGallery() {
   countInfoEl.textContent = images.length ? `${images.length} Bild${images.length === 1 ? '' : 'er'}` : '';
   emptyHintEl.classList.toggle('hidden', images.length > 0);
@@ -1016,14 +1052,29 @@ function renderGallery() {
 
     const actions = document.createElement('div');
     actions.className = 'actions';
+
     const btnEdit = document.createElement('button');
     btnEdit.textContent = 'Bearbeiten';
     btnEdit.onclick = () => openEditor(img.id);
+
+    // Kopieren: Icon statt Label
+    const btnCopy = document.createElement('button');
+    btnCopy.className = 'icon';
+    btnCopy.innerHTML = ICON_COPY;
+    btnCopy.title = 'Kopie erstellen';
+    btnCopy.setAttribute('aria-label', 'Kopie erstellen');
+    btnCopy.onclick = () => duplicateImage(img.id);
+
+    // Entfernen: Icon statt Label
     const btnRemove = document.createElement('button');
-    btnRemove.textContent = 'Entfernen';
-    btnRemove.className = 'danger';
+    btnRemove.className = 'icon danger';
+    btnRemove.innerHTML = ICON_TRASH;
+    btnRemove.title = 'Entfernen';
+    btnRemove.setAttribute('aria-label', 'Entfernen');
     btnRemove.onclick = () => removeImage(img.id);
+
     actions.appendChild(btnEdit);
+    actions.appendChild(btnCopy);
     actions.appendChild(btnRemove);
 
     card.appendChild(thumb);
@@ -1043,6 +1094,45 @@ function removeImage(id) {
   if (editor.imageId === id) closeEditor();
   renderGallery();
   updateApplyAllAvailability();
+}
+
+/**
+ * Erzeugt eine Kopie des Bildes direkt hinter dem Original.
+ * Bereits hinterlegte (committete) Ops werden dabei fest in die Kopie
+ * eingerechnet, damit sie unabhängig vom Original weiterverwendet werden kann.
+ */
+async function duplicateImage(id) {
+  const idx = images.findIndex(x => x.id === id);
+  if (idx < 0) return;
+  const img = images[idx];
+
+  try {
+    const clone = await createImageBitmap(img.sourceBitmap);
+    const bitmap = img.committedOps.length
+      ? await runOps(clone, img.committedOps.map(op => ({ ...op })))
+      : clone;
+
+    const thumb = await makeThumb(bitmap, 256);
+    const thumbBlob = await bitmapToBlob(thumb, 'image/webp', 0.8);
+    thumb.close?.();
+
+    const copy = {
+      id: uuid(),
+      name: `${img.name} (copy)`,
+      sourceBlob: null,
+      sourceBitmap: bitmap,
+      committedOps: [],
+      draftOps: null,
+      thumbnailURL: URL.createObjectURL(thumbBlob),
+    };
+
+    images.splice(idx + 1, 0, copy);
+    renderGallery();
+    updateApplyAllAvailability();
+  } catch (err) {
+    console.error('Kopieren fehlgeschlagen', err);
+    alert('Kopieren fehlgeschlagen: ' + err.message);
+  }
 }
 
 /* ============================================================
@@ -1239,6 +1329,32 @@ btnZoomFit.addEventListener('click', () => {
   editor.zoomFit = true;
   applyZoom();
 });
+
+/* --- Gitter auf Bild einpassen ---
+ * Berechnet Zellbreite/-höhe so, dass Spalten*Breite bzw. Zeilen*Höhe
+ * den verfügbaren Bereich (Bildgröße minus Offset) maximal ausfüllen.
+ * Offsets bleiben unverändert. */
+function fitGridToImage() {
+  const W = editor.previewNaturalWidth;
+  const H = editor.previewNaturalHeight;
+  if (!W || !H) return;
+
+  const g = editor.grid;
+  const availW = Math.max(1, W - g.offX);
+  const availH = Math.max(1, H - g.offY);
+
+  g.w = Math.max(1, Math.floor(availW / g.cols));
+  g.h = Math.max(1, Math.floor(availH / g.rows));
+
+  syncGridInputs();
+  updateGridOverlay();
+}
+
+document.getElementById('btnGridFit').onclick = () => {
+  if (!editor.imageId || editor.mode !== 'grid') return;
+  readGridFromInputs();   // aktuelle cols/rows/offsets übernehmen
+  fitGridToImage();       // w/h daraus neu berechnen
+};
 
 /* --- Modus-Umschaltung (Bearbeiten / Zerlegen) --- */
 
@@ -1845,7 +1961,7 @@ btnGridSplit.onclick = async () => {
 
   try {
     const clone = await createImageBitmap(img.sourceBitmap);
-    const edited = await runOps(clone, img.committedOps.map(op => ({ ...op })));
+    const edited = await runOps(clone, editor.draftOps.map(op => ({ ...op })));
 
     const crops = [];
     for (let r = 0; r < g.rows; r++) {
