@@ -651,6 +651,7 @@
     <hr class="divider" />
 
     <button id="btnExport" class="primary" style="width:100%;" disabled>ZIP exportieren</button>
+    <button id="btnExportToGallery" style="width:100%; margin-top:8px;" disabled>In Galerie exportieren</button>
     <div id="exportStatus" class="status"></div>
   </aside>
 </div>
@@ -840,6 +841,7 @@
         <li>Bei JPEG/WebP die Qualität, bei SVG die Alpha-Schwelle anpassen.</li>
         <li>Optional Suffix und zusätzliche Zielbreiten angeben — dann werden nur diese Versionen exportiert.</li>
         <li><strong>ZIP exportieren</strong> lädt alle bearbeiteten Bilder gesammelt als ZIP herunter.</li>
+        <li><strong>In Galerie exportieren</strong> ersetzt die aktuelle Galerie durch die exportierten Bilder (gleiche Format-/Qualitäts-/Auflösungs-Einstellungen, Aktionen werden eingerechnet). SVG wird dabei nicht unterstützt.</li>
       </ul>
     </div>
 
@@ -1046,16 +1048,29 @@ const galleryEl = document.getElementById('gallery');
 const emptyHintEl = document.getElementById('emptyHint');
 const countInfoEl = document.getElementById('countInfo');
 const btnExport = document.getElementById('btnExport');
+const btnExportToGallery = document.getElementById('btnExportToGallery');
 
 /* Menü-Icon (drei Punkte) */
 const ICON_MENU =
   '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">' +
   '<circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
 
+/**
+ * Aktualisiert den Enabled-Zustand der Export-Buttons.
+ * "In Galerie exportieren" wird bei SVG-Format deaktiviert,
+ * da das Format dort nicht unterstützt wird.
+ */
+function updateExportButtons() {
+  const has = images.length > 0;
+  const isSvg = exportSettings.format === 'svg';
+  btnExport.disabled = !has;
+  btnExportToGallery.disabled = !has || isSvg;
+}
+
 function renderGallery() {
   countInfoEl.textContent = images.length ? `${images.length} Bild${images.length === 1 ? '' : 'er'}` : '';
   emptyHintEl.classList.toggle('hidden', images.length > 0);
-  btnExport.disabled = images.length === 0;
+  updateExportButtons();
 
   galleryEl.innerHTML = '';
   for (const img of images) {
@@ -1387,6 +1402,11 @@ function openEditor(id) {
 
   editor.cropSelection = { x: 0, y: 0, w: img.sourceBitmap.width, h: img.sourceBitmap.height };
 
+  // WICHTIG: previewNaturalWidth/Height sofort setzen, damit Resize-Handler
+  // auch vor dem ersten buildPreview() das richtige Seitenverhältnis nutzen.
+  editor.previewNaturalWidth  = img.sourceBitmap.width;
+  editor.previewNaturalHeight = img.sourceBitmap.height;
+
   resizeWEl.value = img.sourceBitmap.width;
   resizeHEl.value = img.sourceBitmap.height;
 
@@ -1678,11 +1698,23 @@ async function buildPreview() {
     editor.cropSelection = { x: 0, y: 0, w: result.width, h: result.height };
     clampCropSelection();
 
-    if (!resizeWEl.value || parseInt(resizeWEl.value, 10) > result.width) {
+    // Resize-Felder seitenverhältnis-bewusst initialisieren:
+    // Wenn sich das Seitenverhältnis geändert hat (Rotation, Crop), beide
+    // Felder neu auf die aktuellen Ergebnis-Maße setzen. Sonst nur dann
+    // begrenzen, wenn der eingegebene Wert größer als das Ergebnis ist.
+    const newRatio = result.width / result.height;
+    const curW = parseInt(resizeWEl.value, 10) || 0;
+    const curH = parseInt(resizeHEl.value, 10) || 0;
+    const curRatio = curH > 0 ? curW / curH : 0;
+
+    const ratioChanged = curW <= 0 || curH <= 0 || Math.abs(curRatio - newRatio) > 0.01;
+
+    if (ratioChanged) {
       resizeWEl.value = result.width;
-    }
-    if (!resizeHEl.value || parseInt(resizeHEl.value, 10) > result.height) {
       resizeHEl.value = result.height;
+    } else {
+      if (curW > result.width)  resizeWEl.value = result.width;
+      if (curH > result.height) resizeHEl.value = result.height;
     }
 
     if (editor.mode === 'grid') {
@@ -2006,23 +2038,23 @@ document.getElementById('btnAddColorToAlpha').onclick = () => {
   schedulePreview();
 };
 
+// WICHTIG: Seitenverhältnis wird jetzt aus der aktuellen Vorschau gezogen
+// (berücksichtigt Rotation, Crop etc.), nicht mehr aus dem Original-Bitmap.
 resizeWEl.oninput = () => {
   if (!resizeKeepRatio.checked) return;
-  const img = images.find(x => x.id === editor.imageId);
-  if (!img) return;
-  const ratio = img.sourceBitmap.height / img.sourceBitmap.width;
+  if (editor.previewNaturalWidth <= 0 || editor.previewNaturalHeight <= 0) return;
   const w = parseInt(resizeWEl.value, 10);
   if (Number.isFinite(w) && w > 0) {
+    const ratio = editor.previewNaturalHeight / editor.previewNaturalWidth;
     resizeHEl.value = Math.max(1, Math.round(w * ratio));
   }
 };
 resizeHEl.oninput = () => {
   if (!resizeKeepRatio.checked) return;
-  const img = images.find(x => x.id === editor.imageId);
-  if (!img) return;
-  const ratio = img.sourceBitmap.width / img.sourceBitmap.height;
+  if (editor.previewNaturalWidth <= 0 || editor.previewNaturalHeight <= 0) return;
   const h = parseInt(resizeHEl.value, 10);
   if (Number.isFinite(h) && h > 0) {
+    const ratio = editor.previewNaturalWidth / editor.previewNaturalHeight;
     resizeWEl.value = Math.max(1, Math.round(h * ratio));
   }
 };
@@ -2270,6 +2302,7 @@ formatEl.onchange = () => {
   qualityField.classList.toggle('hidden', f === 'png' || isSvg);
   svgAlphaField.classList.toggle('hidden', !isSvg);
   resizeField.classList.toggle('hidden', isSvg);
+  updateExportButtons();
 };
 
 qualityEl.oninput = () => {
@@ -2390,7 +2423,128 @@ btnExport.onclick = async () => {
     exportStatus.textContent = 'Export-Fehler: ' + err.message;
     exportStatus.className = 'status error';
   } finally {
-    btnExport.disabled = images.length === 0;
+    updateExportButtons();
+  }
+};
+
+/* ============================================================
+ *  "In Galerie exportieren"
+ *  Ersetzt die aktuelle Galerie durch die exportierten Bilder
+ *  (Ops eingerechnet, gewähltes Format/Qualität/Auflösungen).
+ *  SVG wird nicht unterstützt.
+ * ============================================================ */
+btnExportToGallery.onclick = async () => {
+  if (images.length === 0) return;
+
+  if (exportSettings.format === 'svg') {
+    exportStatus.textContent = 'SVG wird von "In Galerie exportieren" nicht unterstützt.';
+    exportStatus.className = 'status error';
+    return;
+  }
+
+  const n = images.length;
+  if (!confirm(
+    `Aktuelle Galerie (${n} ${n === 1 ? 'Bild' : 'Bilder'}) durch Export ersetzen?\n\n` +
+    `Die angewendeten Aktionen werden in die neuen Bilder eingerechnet.`
+  )) return;
+
+  btnExport.disabled = true;
+  btnExportToGallery.disabled = true;
+  exportStatus.className = 'status';
+  exportStatus.textContent = 'Exportiere in Galerie …';
+
+  try {
+    const format     = exportSettings.format;
+    const quality    = exportSettings.quality;
+    const suffix     = exportSettings.suffix;
+    const mime       = mimeFor(format);
+    const resizeList = exportSettings.resizeList.slice();
+    const totalJobs  = images.length * (resizeList.length || 1);
+    let done = 0;
+
+    const newImages = [];
+
+    for (const img of images) {
+      const clone  = await createImageBitmap(img.sourceBitmap);
+      const edited = await runOps(clone, img.committedOps.map(op => ({ ...op })));
+
+      if (resizeList.length === 0) {
+        // Native Größe
+        const blob      = await bitmapToBlob(edited, mime, quality);
+        const newBitmap = await createImageBitmap(blob);
+        const thumb     = await makeThumb(newBitmap, 256);
+        const thumbBlob = await bitmapToBlob(thumb, 'image/webp', 0.8);
+        thumb.close?.();
+
+        newImages.push({
+          id: uuid(),
+          name: `${img.name}${suffix}`,
+          sourceBlob: blob,
+          sourceBitmap: newBitmap,
+          committedOps: [],
+          draftOps: null,
+          thumbnailURL: URL.createObjectURL(thumbBlob),
+        });
+        edited.close?.();
+        done++;
+        exportStatus.textContent = `Exportiere in Galerie … ${done}/${totalJobs}`;
+        await new Promise(r => setTimeout(r, 0));
+      } else {
+        for (const targetW of resizeList) {
+          const ratio   = edited.height / edited.width;
+          const targetH = Math.max(1, Math.round(targetW * ratio));
+          const resized = await runOps(
+            await createImageBitmap(edited),
+            [{ type: 'resize', w: targetW, h: targetH }]
+          );
+          const blob      = await bitmapToBlob(resized, mime, quality);
+          const newBitmap = await createImageBitmap(blob);
+          const thumb     = await makeThumb(newBitmap, 256);
+          const thumbBlob = await bitmapToBlob(thumb, 'image/webp', 0.8);
+          thumb.close?.();
+
+          newImages.push({
+            id: uuid(),
+            name: `${img.name}${suffix}${targetW}`,
+            sourceBlob: blob,
+            sourceBitmap: newBitmap,
+            committedOps: [],
+            draftOps: null,
+            thumbnailURL: URL.createObjectURL(thumbBlob),
+          });
+          resized.close?.();
+          done++;
+          exportStatus.textContent = `Exportiere in Galerie … ${done}/${totalJobs}`;
+          await new Promise(r => setTimeout(r, 0));
+        }
+        edited.close?.();
+      }
+    }
+
+    // Editor schließen, falls das aktuell bearbeitete Bild ersetzt wird
+    if (editor.imageId) closeEditor();
+
+    // Alte Bilder freigeben
+    for (const img of images) {
+      URL.revokeObjectURL(img.thumbnailURL);
+      img.sourceBitmap.close?.();
+    }
+
+    // Atomarer Austausch
+    images.length = 0;
+    for (const ni of newImages) images.push(ni);
+
+    renderGallery();
+    updateApplyAllAvailability();
+
+    exportStatus.textContent =
+      `Fertig. ${newImages.length} ${newImages.length === 1 ? 'Bild' : 'Bilder'} in Galerie übernommen.`;
+  } catch (err) {
+    console.error(err);
+    exportStatus.textContent = 'Fehler: ' + err.message;
+    exportStatus.className = 'status error';
+  } finally {
+    updateExportButtons();
   }
 };
 
