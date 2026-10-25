@@ -583,6 +583,7 @@
   <header>
     <h1>Bildstapel-Verarbeitung</h1>
     <button id="btnAdd" class="primary">Bilder hinzufügen</button>
+    <button id="btnPaste" title="Bild aus der Zwischenablage einfügen (Strg+V)">Aus Zwischenablage einfügen</button>
     <input id="fileInput" type="file" accept="image/*" multiple class="hidden" />
     <span id="countInfo" style="color:var(--muted); font-size:12px;"></span>
     <button id="btnHelp" aria-label="Hilfe öffnen" title="Hilfe">?</button>
@@ -2534,8 +2535,50 @@ svgAlphaVal.textContent = svgAlpha.value;
 formatEl.dispatchEvent(new Event('change'));
 
 /* ============================================================
- *  Paste aus der Zwischenablage (Strg+V)
+ *  Paste aus der Zwischenablage (Button + Strg+V)
  * ============================================================ */
+
+function nameClipboardFiles(files) {
+  const stamp = new Date()
+    .toISOString()
+    .slice(0, 23)
+    .replace(/[:T]/g, '-')
+    .replace('.', '-');
+  return files.map((f, i) => {
+    const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+    const base = f.name && !/^image\.(png|jpe?g|webp|gif|bmp)$/i.test(f.name)
+      ? f.name
+      : `eingefuegt-${stamp}${files.length > 1 ? '-' + (i + 1) : ''}.${ext}`;
+    return new File([f], base, { type: f.type });
+  });
+}
+
+const btnPaste = document.getElementById('btnPaste');
+btnPaste.addEventListener('click', async () => {
+  if (!navigator.clipboard || typeof navigator.clipboard.read !== 'function') {
+    alert('Zwischenablage-API nicht verfügbar. Bitte einen modernen Browser und HTTPS verwenden.');
+    return;
+  }
+  try {
+    const items = await navigator.clipboard.read();
+    const files = [];
+    for (const item of items) {
+      for (const type of item.types) {
+        if (!type.startsWith('image/')) continue;
+        const blob = await item.getType(type);
+        files.push(new File([blob], '', { type }));
+      }
+    }
+    if (files.length === 0) {
+      showToast('Keine Bilder in der Zwischenablage gefunden');
+      return;
+    }
+    await addFiles(nameClipboardFiles(files));
+  } catch (err) {
+    console.error(err);
+    alert('Einfügen aus der Zwischenablage fehlgeschlagen: ' + err.message);
+  }
+});
 
 window.addEventListener('paste', async (e) => {
   const active = document.activeElement;
@@ -2559,21 +2602,7 @@ window.addEventListener('paste', async (e) => {
   if (files.length === 0) return;
 
   e.preventDefault();
-
-  const stamp = new Date()
-    .toISOString()
-    .slice(0, 23)
-    .replace(/[:T]/g, '-')
-    .replace('.', '-');
-  const namedFiles = files.map((f, i) => {
-    const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
-    const base = f.name && f.name !== 'image.png'
-      ? f.name
-      : `eingefuegt-${stamp}${files.length > 1 ? '-' + (i + 1) : ''}.${ext}`;
-    return new File([f], base, { type: f.type });
-  });
-
-  await addFiles(namedFiles);
+  await addFiles(nameClipboardFiles(files));
 });
 </script>
 </body>
